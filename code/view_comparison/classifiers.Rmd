@@ -1,0 +1,179 @@
+---
+title: "Classification Relevance"
+author: "Ricardo Ramirez"
+date: "6/13/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(ranger)
+library(ggrepel)
+source("./code//utils/analysis_utils.R")
+```
+
+## Introduction
+
+As shown in the analysis of explained variance, certain biological views tend to contain a variance structure that is more strongly associated to the histological labels, however it may be the case that there's a different signal to noise ratio and still the captured signal is enough to characterize the disease. 
+
+In this notebook we will use the out of bag prediction error rate as a measure of signal
+
+## Fitting random forests
+
+For each view we will make data frames that allow us to fit immediate random forests
+
+1) First load the meta-data
+
+```{r}
+set.seed(9712)
+
+meta <-  read_csv("./data/visium_patient_anns_revisions.csv", 
+                  show_col_types = F) %>%
+  dplyr::select(patient_region_id, patient_group) %>%
+  unique()
+```
+
+2) Import and separate views
+
+```{r}
+all.files <- list.files("./processed_data", rec=F, full.names = T,)
+dir.files <- all.files[!file.info(all.files)$isdir]
+
+var.genes <- readRDS("./processed_data/scITDdata/var_genes.rds")
+
+views <- dir.files %>%
+  map(., read_csv, show_col_types = FALSE) %>%
+  bind_rows() %>%
+  mutate(view_type = ifelse(grepl("gex", view), "molecular", "structural"))
+
+molecular <- views %>%
+  dplyr::filter(view_type == "molecular") %>%
+  dplyr::select(-view_type) 
+
+compositional <- views %>%
+  dplyr::filter(view_type == "structural",
+                grepl("comp", view)) %>%
+  dplyr::select(-view_type)
+
+structural <- views %>%
+  dplyr::filter(view_type == "structural",
+                grepl("misty", view)) %>%
+  dplyr::select(-view_type)
+
+```
+
+3) Transformed compositions
+
+```{r}
+ilr_comps <- compositional %>%
+  group_by(view) %>%
+  nest() %>%
+  mutate(dat_mat = map(data, view_to_matrix)) %>%
+  mutate(comp_mat = map(dat_mat, build_compositions, flavor = "clr")) %>%
+  mutate(comp_mat = map2(comp_mat, paste0("clr_", view), matrix_to_view)) %>%
+  ungroup() %>%
+  dplyr::select(comp_mat) %>%
+  unnest()
+```
+
+4) Multicellular programs
+
+```{r}
+mcell_prog <- read_csv("./processed_data/scITDdata/snRNAseq_mcellprog.csv")
+```
+
+4.1) Multicellular programs with MOFA
+
+```{r}
+mcell_prog_MOFA <- read_csv("./processed_data/MOFAdata/snRNAseq_mcellprog_MOFA.csv")
+```
+
+5) Bind them together
+
+First run PCA regression as last time
+
+```{r, warning=F, message=F}
+all_views <- bind_rows(molecular, structural, ilr_comps, mcell_prog, mcell_prog_MOFA) %>%
+  group_by(view) %>%
+  nest() %>%
+  mutate(dat_mat = map(data, view_to_matrix)) %>%
+  mutate(pca_obj = map(dat_mat, do_pca, features = NULL, meta = meta)) %>%
+  mutate(pca_regress = map(pca_obj, regress_PCA, cat_var = "patient_group")) %>%
+  mutate(expl_var = map(pca_regress, function(x) {
+    x %>%
+      dplyr::filter(p_adj <= 0.1) %>%
+      summarize(total_var = sum(Expl_var))
+  }))
+```
+
+Then perform Random Forests over the PCA space (to reduce overfitting)
+
+```{r, warning=F, message=F}
+all_views <- all_views %>%
+  mutate(RF_dat = map(pca_obj, function(x) {
+    x$coords %>%
+      pivot_wider(names_from = PC, values_from = value) %>%
+      as.data.frame() %>%
+      column_to_rownames("patient_region_id") %>%
+      dplyr::mutate(patient_group = factor(patient_group))
+  })) %>%
+  mutate(OOB_error = map(RF_dat, function(x) {
+    rf = (ranger(patient_group ~ ., data= x))$prediction.error
+  })) 
+```
+
+## Signal to noise ratio
+
+We will quantify signal as the 1-OOB_error since it represents how much of the information can be extracted from the feature space. We will quantify as noise (1-expl variance) since it represents the amount of variability in the data that can't be associated with the phenotype
+
+```{r}
+view_metrics <- all_views %>%
+  dplyr::select(OOB_error, expl_var) %>%
+  unnest() %>%
+  dplyr::mutate(total_var = total_var/100) %>%
+  dplyr::mutate(signal = 1-OOB_error,
+                noise = 1-total_var) %>%
+  mutate(view_type = ifelse(grepl("gex", view), "molecular", "structural")) %>%
+  mutate(view_type = ifelse(grepl("mcellprog", view), "molecular", view_type)) %>%
+  mutate("signal2noise" = signal/noise)
+
+view_metrics %>%
+  ggplot(aes(x = noise, y = signal, color = view_type, label = view)) +
+  geom_point(size = 3) +
+  ggrepel::geom_text_repel() +
+  theme_classic() +
+  theme(axis.text = element_text(size = 12),
+        axis.title = element_text(size = 15)) +
+  coord_equal()
+```
+
+Gene expression profiles have the highest signal however, there's a lot of "noise" associated with the measurements. Compositional data have less noise but with lesss signal overall, while spatial interactions had the worst signal to noise ratio
+
+```{r}
+order <- view_metrics %>%
+  arrange(-signal2noise) %>%
+  pull(view)
+  
+view_metrics <- view_metrics %>%
+  mutate(view = factor(view, levels = order))
+
+ggplot(view_metrics, aes(x =  signal2noise, y = view)) +
+  geom_bar(stat = "identity") +
+  theme_classic() +
+  theme(axis.text = element_text(size = 12),
+        axis.title = element_text(size = 15))
+```
+
+# Write dataframe for MOFA runs
+
+```{r}
+write_csv(all_views %>% dplyr::select(data) %>% unnest(), "./processed_data/MOFAdata/all_views.csv")
+```
+
+
+
+
+
+
