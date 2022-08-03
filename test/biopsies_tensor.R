@@ -1,6 +1,6 @@
 require(liana)
 
-context_df_dict <- readRDS("data/context_df_dict.RDS")
+context_df_dict <- readRDS("../data/context_df_dict.RDS")
 
 tensor <- liana_tensor_c2c(context_df_dict)
 
