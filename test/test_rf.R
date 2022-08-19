@@ -2,13 +2,16 @@ facts <- MOFA2::get_factors(MOFAobject.trained) %>%
     pluck(1) %>%
     as.data.frame() %>%
     rownames_to_column("condition") %>%
-    mutate(condition=as.factor(gsub(x = condition, pattern = "[|].*", replacement = "")))
+    mutate(condition=as.factor(gsub(x = condition,
+                                    pattern = "[|].*",
+                                    replacement = "")))
 facts
 
 # Set random seed to make results reproducible:
 set.seed(6)
 # Calculate the size of each of the data sets:
-data_set_size <- floor(nrow(facts)/2)
+data_set_size <- floor(nrow(facts)/3)
+
 # Generate a random sample of "data_set_size" indexes
 indexes <- sample(1:nrow(facts), size = data_set_size)
 
@@ -35,15 +38,46 @@ library(ROCR)
 
 # Calculate the probability of new observations belonging to each class
 # prediction_for_roc_curve will be a matrix with dimensions data_set_size x number_of_classes
-prediction_for_roc_curve <- stats::predict(rf_classifier,validation1[,-1],type="prob")
+predictions <- stats::predict(rf_classifier,validation1[,-1],type="prob")
+
+# Estimate and Aggregate performance
+performances <- map(colnames(predictions),
+    function(label){
+        true_values <- ifelse(validation1$condition==label,1,0)
+        pred <- prediction(predictions[,label], true_values)
+        perf <- performance(pred, "tpr", "fpr")
+
+        tibble(condition=label,
+               fpr = pluck(perf, "x.values")[[1]],
+               tpr = pluck(perf, "y.values")[[1]])
+    }) %>%
+    bind_rows()
+
+performances %>%
+    ggplot(aes(x=fpr, y=tpr, colour=condition)) +
+    geom_line(size=1.5) +
+    theme_minimal(base_size = 16)
+
+
+predictions %>%
+    as_tibble() %>%
+
+
+
+
 
 # Use pretty colours:
-pretty_colours <- c("#F8766D","#00BA38","#619CFF")
+pretty_colours <- c("#F8766D","#00BA38","#619CFF", "red", "blue", "black")
 # Specify the different classes
 classes <- levels(validation1$condition)
 
+
+
+
+
+
 # For each class
-for (i in 1:3){
+for (i in 1:6){
     # Define which observations belong to class[i]
     true_values <- ifelse(validation1[,1]==classes[i],1,0)
     # Assess the performance of classifier for class[i]

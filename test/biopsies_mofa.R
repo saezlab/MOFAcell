@@ -5,7 +5,6 @@ scores <- liana_cc2mofa(context_df_dict,
                         lr_prop = 0.2,
                         lr_min = 20)
 
-
 # MOFA
 require(MOFA2)
 
@@ -15,7 +14,7 @@ liana.mofa <- create_mofa(scores)
 # MOFA options
 data_opts <- get_default_data_options(liana.mofa)
 model_opts <- get_default_model_options(liana.mofa)
-model_opts$num_factors <- 10
+model_opts$num_factors <- 15
 train_opts <- get_default_training_options(liana.mofa)
 train_opts$maxiter <- 250
 
