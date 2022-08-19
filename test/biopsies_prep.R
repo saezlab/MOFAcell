@@ -1,3 +1,5 @@
+remotes::install_github("saezlab/liana", ref="dev")
+
 library(SeuratDisk)
 library(HDF5Array)
 library(scuttle)
@@ -28,7 +30,6 @@ sce <- HDF5Array::loadHDF5SummarizedExperiment("/media/dbdimitrov/SSDDimitrov/Re
 
 # Normalize RNA assay
 sce <- scuttle::logNormCounts(sce)
-
 gc()
 
 ### Internal Functions for LIANA to filter cell types across samples (For SC)
@@ -50,7 +51,7 @@ gc()
 #'
 #' @param sce SingleCellExperiment
 #' @param sample_col Name of the column with sample ids
-filter_samples <- function(sce, sample_col){
+filter_samples <- function(sce, sample_col, zscore_tresh=-3){
 
     pb <- scuttle::aggregateAcrossCells(sce, ids=sce[[sample_col]])
 
@@ -58,17 +59,16 @@ filter_samples <- function(sce, sample_col){
         as_tibble(rownames="sample",
                   .name_repair = "universal") %>%
         dplyr::rename(zscore = `...1`) %>%
-        mutate(keep_total = zscore > -3)
+        mutate(keep_total = zscore > zscore_tresh)
 
     sample_dist %>%
         ggplot(aes(x = zscore, fill=keep_total)) +
         geom_histogram() +
         scale_fill_manual(values = c('TRUE' = 'black', 'FALSE' = 'red'),
                           guide = "none") +
-        geom_vline(aes(xintercept=-3),
+        geom_vline(aes(xintercept=zscore_tresh),
                    color="red", linetype="dashed") +
         theme_bw()
-    print(sample_dist)
 
     keep_total <- sample_dist %>% select(sample, keep_total) %>% deframe()
     keep_total <- colData(sce) %>%
@@ -81,31 +81,26 @@ filter_samples <- function(sce, sample_col){
     return(sce)
 }
 
+
 sce <- filter_samples(sce, sample_col = "Sample")
 
 
 # 2. Filter Cell types by min.cell num + min.cell by sample
-ctqc <- get_abundance_summary(sce,
-                              sample_col = "Sample",
-                              idents_col = "predicted.annotation.l2")
-
-# Before filt
-plot_abundance_summary(ctqc, ncol=4)
-
-
 # filter
 sce <- filter_nonabundant_celltypes(sce,
-                                    ctqc,
                                     sample_col = "Sample",
-                                    idents_col = "predicted.annotation.l2"
-)
+                                    idents_col = "predicted.annotation.l2",
+                                    min_prop = 0.25,
+                                    min_cells = 20,
+                                    min_samples = 3
+                                    )
 
 
 # after filt
-ctqc.after <- get_abundance_summary(sce,
-                                    sample_col = "Sample",
-                                    idents_col = "predicted.annotation.l2")
-plot_abundance_summary(ctqc.after, ncol=3)
+get_abundance_summary(sce,
+                      sample_col = "Sample",
+                      idents_col = "predicted.annotation.l2") %>%
+    plot_abundance_summary(ncol=3)
 
 
 # + 3a. Filter genes/LR /w edgeR fun? for pseudobulk
@@ -122,8 +117,9 @@ sce$Group %>% unique()
 
 groups_of_interest <- colData(sce) %>%
     as_tibble(rownames="barcodes") %>%
-    filter(Group %in% c("IgA", "CTRL")) %>%
+    # filter(Group %in% c("IgA", "CTRL", "MN")) %>%
     pull("barcodes")
+
 sce <- sce[,groups_of_interest]
 
 

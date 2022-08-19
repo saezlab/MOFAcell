@@ -1,7 +1,9 @@
 context_df_dict <- readRDS("/media/dbdimitrov/SSDDimitrov/Repos/biopsies/context_df_dict.RDS")
+# context_df_dict$`FSGS|K68` <- NULL
 
-
-scores <- liana_cc2mofa(context_df_dict)
+scores <- liana_cc2mofa(context_df_dict,
+                        lr_prop = 0.2,
+                        lr_min = 20)
 
 
 # MOFA
@@ -55,6 +57,10 @@ factor_loadings <- plot_factor(MOFAobject.trained,
                                add_violin = TRUE, # add violin plots,
                                violin_alpha = 0.25  # transparency of violin plots
                                )
+MOFA2::get_factors(MOFAobject.trained)[[1]] %>%
+    as_tibble(rownames="Sample") %>%
+    arrange(desc(abs(Factor6)))
+
 
 overview <- patchwork::wrap_plots(list(factor_loadings,
                                        var_explained
@@ -65,6 +71,8 @@ overview <- patchwork::wrap_plots(list(factor_loadings,
     patchwork::plot_layout(guides = "collect")
 
 grid::grid.draw(overview)
+
+
 
 
 
