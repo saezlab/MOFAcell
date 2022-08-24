@@ -15,7 +15,7 @@ print(h5$index())
 
 # Read Sobj
 sobj <- SeuratDisk::LoadH5Seurat("data/biopsies/seuratobject.h5Seurat",
-                                 assays = c(RNA = "counts"), #### CHANGE TO RNA!!!!
+                                 assays = c(RNA = "counts"),
                                  graphs = FALSE)
 sce <- Seurat::as.SingleCellExperiment(sobj)
 sce@assays@data@listData$logcounts <- NULL
@@ -54,32 +54,22 @@ sce <- filter_nonabundant_celltypes(sce,
 cairo_pdf(filename = "plots/biopsies_ctqc.pdf",
           height = 42,
           width = 18)
-get_abundance_summary(sce,
+print(get_abundance_summary(sce,
                       sample_col = "Sample",
                       idents_col = "predicted.annotation.l2") %>%
-    plot_abundance_summary(ncol=3)
+    plot_abundance_summary(ncol=3))
 
 dev.off()
 
 
-# + 3a. Filter genes/LR /w edgeR fun? for pseudobulk
-# ^liana_pseudobulk
-
-
-
-# + 3a. Filter Proportions of Cell types and LR Expression samples (Untargetted)
-# ^MOFAphone
-
-
-# --- Test Keep only IgA and TRL
-sce$Group %>% unique()
-
-groups_of_interest <- colData(sce) %>%
-    as_tibble(rownames="barcodes") %>%
-    # filter(Group %in% c("IgA", "CTRL", "MN")) %>%
-    pull("barcodes")
-
-sce <- sce[,groups_of_interest]
+# # --- Test Keep only IgA and TRL
+# sce$Group %>% unique()
+#
+# groups_of_interest <- colData(sce) %>%
+#     as_tibble(rownames="barcodes") %>%
+#     # filter(Group %in% c("IgA", "CTRL", "MN")) %>%
+#     pull("barcodes")
+# sce <- sce[,groups_of_interest]
 
 
 # Run LIANA by Sample ----
@@ -88,5 +78,5 @@ context_df_dict <- liana_bysample(sce = sce,
                                   condition_col = "Group",
                                   idents_col = "predicted.annotation.l2",
                                   permutation.params=list(nperms=2))
-saveRDS(context_df_dict, "/media/dbdimitrov/SSDDimitrov/Repos/biopsies/context_df_dict.RDS")
+saveRDS(context_df_dict, "output/biopsies/context_df_dict.RDS")
 
