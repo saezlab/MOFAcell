@@ -1,0 +1,389 @@
+---
+title: "Evaluate CCC pattern Reduction Techniques"
+author: "Daniel Dimitrov"
+date: "8/23/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+source("code/utils/ccc_utils.R")
+
+
+# Helper function to return those...
+# Make liana::.housekeep and specs explicit
+# explain how it works
+score.names <- c("rev_agg",
+                 "natmi.prod_weight", 
+                 "sca.LRscore",
+                 "cellphonedb.lr.mean")
+
+
+library(SingleCellExperiment)
+library(HDF5Array)
+library(scuttle)
+library(tidyverse)
+library(reticulate)
+library(liana)
+
+```
+
+## IFN-beta dataset
+```{r}
+
+RANK = 5
+
+```
+
+## Dataset Preparation
+```{r, eval=FALSE, echo=FALSE}
+library(ExperimentHub)
+eh <- ExperimentHub()
+query(eh, "Kang")
+
+# Get Data
+(sce <- eh[["EH2259"]])
+
+# calculate per-cell quality control (QC) metrics
+library(scater)
+qc <- perCellQCMetrics(sce)
+qc
+
+# remove cells with few or many detected genes
+ol <- isOutlier(metric = qc$detected, nmads = 3, log = TRUE)
+sce <- sce[, !ol]
+
+# keep only singlet cells
+sce <- sce[,sce$multiplets=="singlet"]
+
+# remove lowly expressed genes
+sce <- sce[rowSums(counts(sce) >= 1) >= 5, ]
+dim(sce)
+
+## Normalize
+# compute sum-factors & normalize
+sce <- computeLibraryFactors(sce)
+sce <- logNormCounts(sce)
+
+# Save as array experiment
+# HDF5Array::saveHDF5SummarizedExperiment(sce, "data/ifn/hdf5arr/", replace=TRUE)
+saveRDS(sce, "sce_ifn.RDS")
+```
+
+
+## Check Samples across Cell types
+```{r, eval=FALSE}
+# sce <- HDF5Array::loadHDF5SummarizedExperiment("data/ifn/hdf5arr/")
+sce <- readRDS("sce_ifn.RDS")
+
+## create a key id for each sample
+colData(sce) <- colData(sce) %>%
+    as_tibble(rownames="barcode") %>%
+    unite(ind, stim, col="sample", sep = "|", remove = FALSE) %>%
+    column_to_rownames("barcode") %>%
+    DataFrame()
+
+
+# Filter samples by total counts
+sce <- filter_samples(sce,
+                      sample_col = "sample",
+                      plot_dir = "plots/ifn_sample_qc.pdf")
+
+### Before
+liana:::get_abundance_summary(sce,
+                              sample_col = "sample",
+                              idents_col = "cell",
+                              min_prop = 0.20,
+                                            min_cells = 20,
+                                            min_samples = 3) %>%
+    liana:::plot_abundance_summary(ncol=3)
+
+
+# filter non-abundant celltypes (!!! To reformat idents_col without missing levels)
+sce <- liana:::filter_nonabundant_celltypes(sce,
+                                            sample_col = "sample",
+                                            idents_col = "cell",
+                                            min_prop = 0.20,
+                                            min_cells = 20,
+                                            min_samples = 3
+                                            )
+
+# after
+liana:::get_abundance_summary(sce,
+                              sample_col = "sample",
+                              idents_col = "cell",
+                              min_prop = 0.20,
+                                            min_cells = 20,
+                                            min_samples = 3) %>%
+    liana:::plot_abundance_summary(ncol=3)
+
+```
+
+
+
+## Myocardial infraction dataset
+
+```{r}
+RANK=10
+KEY = "hca"
+
+# Bleh - maybe instead I just create a dataframe or something in misc in sce
+min_prop = 0.25 
+min_cells = 20
+min_samples = 3
+
+# Column names
+sample_col = "sample"
+condition_col = "patient_group"
+idents_col = "cell_type"
+```
+
+Load the data
+
+```{r}
+sce <- HDF5Array::loadHDF5SummarizedExperiment(str_glue("data/{KEY}/{KEY}_sce"))
+
+# Create new label
+colData(sce) <- colData(sce) %>%
+    as_tibble(rownames="barcode") %>%
+    unite(patient, patient_group, col=sample_col, sep = "|", remove = FALSE) %>%
+    column_to_rownames("barcode") %>%
+    DataFrame()
+
+
+# Filter samples by total counts
+sce <- filter_samples(sce,
+                      sample_col = sample_col,
+                      plot_dir = str_glue("plots/{KEY}_sample_qc.pdf"))
+
+### Before
+liana:::get_abundance_summary(sce,
+                              sample_col = sample_col,
+                              idents_col = idents_col,
+                              min_prop = min_prop,
+                              min_cells = min_cells,
+                              min_samples = min_samples) %>%
+    liana:::plot_abundance_summary(ncol=3)
+
+
+# filter non-abundant celltypes (!!! To reformat idents_col without missing levels)
+sce <- liana:::filter_nonabundant_celltypes(sce,
+                                            sample_col = sample_col,
+                                            idents_col = idents_col,
+                                            min_prop = min_prop,
+                                            min_cells = min_cells,
+                                            min_samples = min_samples
+                                            )
+
+# after
+liana:::get_abundance_summary(sce,
+                              sample_col = sample_col,
+                              idents_col = idents_col,
+                              min_prop = min_prop,
+                              min_cells = min_cells,
+                              min_samples = min_samples
+                              ) %>%
+    liana:::plot_abundance_summary(ncol=3)
+
+HDF5Array::saveHDF5SummarizedExperiment(sce, str_glue("data/{KEY}/{KEY}_filt_sce"))
+```
+
+re-load filtered object
+```{r}
+sce <- HDF5Array::loadHDF5SummarizedExperiment(str_glue("data/{KEY}/{KEY}_filt_sce"))
+sce <- scuttle::logNormCounts(sce)
+```
+
+
+COMMON ----
+
+## Run LIANA
+```{r, eval=FALSE}
+
+# To add a check if the column is present in sce
+context_df_dict <- liana_bysample(sce = sce,
+                                  sample_col = "patient",
+                                  condition_col = condition_col,
+                                  idents_col = idents_col,
+                                  permutation.params=list(nperms=2))
+saveRDS(context_df_dict, str_glue("output/{KEY}/{KEY}_dict.RDS"))
+
+# aggregate
+context_df_dict <- context_df_dict %>%
+    map(~liana_aggregate(.x,
+                         .score_mode = liana:::.score_housekeep,
+                         verbose = FALSE) %>% 
+            mutate(rev_agg = 1 - aggregate_rank))
+saveRDS(context_df_dict, str_glue("output/{KEY}/{KEY}_dict_agg.RDS"))
+
+## ^ LIANA by sample should save results in the SingleCellExperiment object!
+
+```
+
+
+## EVAL ----
+Read Contexts Dictionary
+```{r}
+context_df_dict <- readRDS(str_glue("output/{KEY}/{KEY}_dict_agg.RDS"))
+```
+
+
+### MOFA
+```{r}
+library(MOFA2)
+
+mofa.results <- map(score.names, function(score_col){
+    liana_mofa(context_df_dict, 
+               score_col = score_col,
+               lr_min = 15,
+               lr_prop = 0.2,
+               model_options = list(num_factors = RANK),
+               train_options = list(maxiter = 300))
+    }) %>%
+    setNames(score.names)
+
+
+# Get factor scores
+mofa.scores <- map(mofa.results, ~MOFA2::get_factors(.x) %>%
+    pluck(1) %>%
+    t()) 
+
+# Save all results to SCE
+
+```
+
+
+### Basic Visualization
+Plot Factor Scores
+```{r}
+fact.plots <- imap(mofa.results, ~ plot_factor(.x,
+                               factors = c(1:(MOFA2::get_factors(.x)[[1]] %>% ncol())),
+                               color_by = "group",
+                               dot_size = 5, # change dot size
+                               dodge = TRUE, # dodge points with different colors
+                               legend = FALSE, # remove legend
+                               add_violin = TRUE, # add violin plots,
+                               violin_alpha = 0.25  # transparency of violin plots
+                               ) + 
+        labs(title=.y))
+
+patchwork::wrap_plots(fact.plots,
+                      ncol=2)
+```
+
+
+
+Plot Variance Explained per cell-type pair
+```{r}
+
+vars.plots <- imap(mofa.results, ~plot_variance_explained(.x) +
+    theme(axis.text.x = element_text(angle = 90,
+                                     hjust=1)) + 
+        labs(title=.y))
+
+patchwork::wrap_plots(vars.plots,
+                      ncol=2)
+```
+
+## Tensor
+```{r}
+
+## Tensor results
+tensor.results <- map(score.names, function(score_col){
+    liana_tensor_c2c(context_df_dict,
+                     score_col = score_col,
+                     rank = RANK,
+                     conda_env = NULL,
+                     how='outer' # outer is super bad - there might be something wrong
+                     ) %>%
+        pluck("factors") %>%
+        format_c2c_factors()
+    }) %>% 
+    setNames(score.names)
+
+tensor.scores <-  map(tensor.results, ~.x$contexts %>%
+    select(-sample, -condition) %>%
+    as.data.frame() %>%
+    column_to_rownames("sample_condition") %>%
+    t())
+
+# Save all results to SCE
+```
+
+Plot Context (Factor) scores
+```{r}
+overview.plots <- tensor.results %>%
+    imap(~plot_c2c_overview(.x) + 
+            labs(title=.y))
+
+# Save all results to SCE
+```
+### Simple Scores Format
+
+```{r}
+# Take scores from the MOFA objects
+lr.scores <- map(mofa.results, ~.x %>% pluck("data") %>% 
+                     map(function(lr.mat){
+                         lr.mat <- lr.mat[[1]] %>%
+                             as_tibble(rownames="lr") %>%
+                             replace(is.na(.), 0) #!!
+                         
+                     }) %>%
+                     bind_rows() %>%
+    as.data.frame() %>%
+    column_to_rownames("lr")
+                ) %>%
+    setNames(names(mofa.results))
+
+# Save all results to SCE
+```
+
+
+### Evaluate
+```{r}
+library(ranger)
+
+eval_res <- score.names %>%
+    map(function(x){
+        scores.list <- list("LRscores" = lr.scores[[x]],
+                            "MOFA" = mofa.scores[[x]],
+                            "Tensor" = tensor.scores[[x]]
+                            )
+        
+        res <- imap(scores.list, function(s, method){
+            if(method=="LRscores"){
+                pca_obj <- pca_regress(s, norm=TRUE, rank. = RANK)
+            } else{
+                pca_obj <- pca_regress(s, norm=FALSE)
+            }
+            
+            
+            tibble(total_val = pca_obj$total_var,
+                   oob_error = run_rf(pca_obj) %>%
+                       pluck("prediction.error"),
+                   method = method
+                   )
+            }) %>%
+        bind_rows()
+            
+        }) %>%
+    setNames(score.names) %>%
+    enframe(name="score") %>%
+    unnest(value)
+
+
+eval_res %>%
+    ggplot(aes(x=oob_error,
+               y=total_val,
+               colour = method, 
+               shape = score)) +
+    geom_point(size=10) +
+    theme_minimal() +
+    lims(x = c(0,1),
+         y = c(0,1))
+```
+
+
+
+
