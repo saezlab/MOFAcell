@@ -1,5 +1,3 @@
-remotes::install_github("saezlab/liana", ref="dev")
-
 library(SeuratDisk)
 library(HDF5Array)
 library(scuttle)
