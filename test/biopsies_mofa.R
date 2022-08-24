@@ -1,9 +1,28 @@
 context_df_dict <- readRDS("/media/dbdimitrov/SSDDimitrov/Repos/biopsies/context_df_dict.RDS")
 # context_df_dict$`FSGS|K68` <- NULL
 
-scores <- liana_cc2mofa(context_df_dict,
-                        lr_prop = 0.2,
-                        lr_min = 20)
+context_df_dict <- readRDS("/media/dbdimitrov/SSDDimitrov/Repos/biopsies/context_df_dict.RDS")[
+    str_detect(names(context_df_dict), pattern = "CTRL|IgA|MN")
+]
+
+
+# Prepare ligand-receptor scores in a way that fit mofa
+scores <- liana:::liana_cc2mofa(context_df_dict,
+                                score_col = "rev_agg",
+                                lr_prop = 0.2,
+                                lr_min = 20
+                                )
+
+
+model_opts <- list(num_factors = 10)
+
+
+
+
+get_default_model_options(liana.mofa)
+
+# model_opts %>% modify_at(.at = "num_factors", .f = function(x) x = 10)
+
 
 # MOFA
 require(MOFA2)
@@ -14,9 +33,9 @@ liana.mofa <- create_mofa(scores)
 # MOFA options
 data_opts <- get_default_data_options(liana.mofa)
 model_opts <- get_default_model_options(liana.mofa)
-model_opts$num_factors <- 15
+model_opts$num_factors <- 10
 train_opts <- get_default_training_options(liana.mofa)
-train_opts$maxiter <- 250
+train_opts$maxiter <- 500
 
 # Prep
 liana.mofa <- prepare_mofa(
@@ -26,7 +45,7 @@ liana.mofa <- prepare_mofa(
     training_options = train_opts)
 
 # Run
-outfile = file.path(getwd(), "model.hdf5")
+outfile = file.path(getwd(), "model_simple.hdf5")
 MOFAobject.trained <- run_mofa(liana.mofa,
                                outfile)
 
@@ -57,8 +76,7 @@ factor_loadings <- plot_factor(MOFAobject.trained,
                                violin_alpha = 0.25  # transparency of violin plots
                                )
 MOFA2::get_factors(MOFAobject.trained)[[1]] %>%
-    as_tibble(rownames="Sample") %>%
-    arrange(desc(abs(Factor6)))
+    as_tibble(rownames="Sample")
 
 
 overview <- patchwork::wrap_plots(list(factor_loadings,
