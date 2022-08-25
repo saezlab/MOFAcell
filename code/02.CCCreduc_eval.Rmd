@@ -134,7 +134,7 @@ min_cells = 20
 min_samples = 3
 
 # Column names
-sample_col = "sample"
+sample_col = "patient"
 condition_col = "patient_group"
 idents_col = "cell_type"
 ```
@@ -154,7 +154,10 @@ colData(sce) <- colData(sce) %>%
 
 # Filter samples by total counts
 sce <- filter_samples(sce,
-                      sample_col = sample_col,
+                      # this will break ^ make sure above happens internally
+                      # it's now done in liana_per_sample
+                      # here sample_col is not unique!
+                      sample_col = sample_col, 
                       plot_dir = str_glue("plots/{KEY}_sample_qc.pdf"))
 
 ### Before
@@ -186,13 +189,86 @@ liana:::get_abundance_summary(sce,
                               ) %>%
     liana:::plot_abundance_summary(ncol=3)
 
+sce <- scuttle::logNormCounts(sce)
+
 HDF5Array::saveHDF5SummarizedExperiment(sce, str_glue("data/{KEY}/{KEY}_filt_sce"))
 ```
 
 re-load filtered object
 ```{r}
 sce <- HDF5Array::loadHDF5SummarizedExperiment(str_glue("data/{KEY}/{KEY}_filt_sce"))
+```
+
+
+## Biopsies
+
+```{r}
+KEY = "biopsies"
+RANK=10
+
+sample_col = "Sample"
+idents_col = "predicted.annotation.l2"
+condition_col = "Group"
+
+min_prop = 0.25
+min_cells = 20
+min_samples = 3
+```
+
+
+```{r}
+
+h5 <- SeuratDisk::Connect(str_glue("data/{KEY}/seuratobject.h5Seurat"))
+
+h5[["meta.data"]]
+print(h5$index())
+
+# Read Sobj
+sobj <- SeuratDisk::LoadH5Seurat(str_glue("data/{KEY}/seuratobject.h5Seurat"),
+                                 assays = c(RNA = "counts"),
+                                 graphs = FALSE)
+sce <- Seurat::as.SingleCellExperiment(sobj)
+sce@assays@data@listData$logcounts <- NULL
+rm(sobj)
+
+# Basic Feature Filtering
+sce <- sce[rowSums(counts(sce) >= 0) >= 5, ]
+print(dim(sce))
+
+# Save as HDF5 Experiment:
+HDF5Array::saveHDF5SummarizedExperiment(sce, str_glue("data/{KEY}/hdf5arr/"), replace=TRUE)
+
+# Read HDF5
+sce <- HDF5Array::loadHDF5SummarizedExperiment(str_glue("data/{KEY}/hdf5arr/"))
+
+# 1. Filter Samples - e.g. 3 z-scores < of SUM total counts
+sce <- filter_samples(sce, sample_col = "Sample")
+
+# 2. Filter Cell types by min.cell num + min.cell by sample
+sce <- liana:::filter_nonabundant_celltypes(sce,
+                                            sample_col = sample_col,
+                                            idents_col = idents_col,
+                                            min_prop = min_prop,
+                                            min_cells = min_cells,
+                                            min_samples = min_samples
+                                            )
+
+liana:::get_abundance_summary(sce,
+                              sample_col = sample_col,
+                              idents_col = idents_col,
+                              min_prop = min_prop,
+                              min_cells = min_cells,
+                              min_samples = min_samples) %>%
+    liana:::plot_abundance_summary(ncol=3)
+
+
+# Normalize RNA assay
 sce <- scuttle::logNormCounts(sce)
+gc()
+
+# quicksave /w normalized assay
+HDF5Array::quickResaveHDF5SummarizedExperiment(sce)
+
 ```
 
 
@@ -203,7 +279,7 @@ COMMON ----
 
 # To add a check if the column is present in sce
 context_df_dict <- liana_bysample(sce = sce,
-                                  sample_col = "patient",
+                                  sample_col = sample_col,
                                   condition_col = condition_col,
                                   idents_col = idents_col,
                                   permutation.params=list(nperms=2))
@@ -233,7 +309,7 @@ context_df_dict <- readRDS(str_glue("output/{KEY}/{KEY}_dict_agg.RDS"))
 ```{r}
 library(MOFA2)
 
-mofa.results <- map(score.names, function(score_col){
+sce@metadata$mofa.results <- map(score.names, function(score_col){
     liana_mofa(context_df_dict, 
                score_col = score_col,
                lr_min = 15,
@@ -245,22 +321,20 @@ mofa.results <- map(score.names, function(score_col){
 
 
 # Get factor scores
-mofa.scores <- map(mofa.results, ~MOFA2::get_factors(.x) %>%
+sce@metadata$mofa.scores <- map(mofa.results, ~MOFA2::get_factors(.x) %>%
     pluck(1) %>%
     t()) 
-
-# Save all results to SCE
-
 ```
 
 
 ### Basic Visualization
 Plot Factor Scores
 ```{r}
-fact.plots <- imap(mofa.results, ~ plot_factor(.x,
-                               factors = c(1:(MOFA2::get_factors(.x)[[1]] %>% ncol())),
-                               color_by = "group",
-                               dot_size = 5, # change dot size
+fact.plots <- imap(metadata(sce)$mofa.results,
+                   ~ plot_factor(.x,
+                                 factors = c(1:(MOFA2::get_factors(.x)[[1]] %>% ncol())),
+                                 color_by = "group",
+                                 dot_size = 5, # change dot size
                                dodge = TRUE, # dodge points with different colors
                                legend = FALSE, # remove legend
                                add_violin = TRUE, # add violin plots,
@@ -277,10 +351,11 @@ patchwork::wrap_plots(fact.plots,
 Plot Variance Explained per cell-type pair
 ```{r}
 
-vars.plots <- imap(mofa.results, ~plot_variance_explained(.x) +
-    theme(axis.text.x = element_text(angle = 90,
-                                     hjust=1)) + 
-        labs(title=.y))
+vars.plots <- imap(metadata(sce)$mofa.results,
+                   ~plot_variance_explained(.x) +
+                       theme(axis.text.x = element_text(angle = 90,
+                                                        hjust=1)) + 
+                       labs(title=.y))
 
 patchwork::wrap_plots(vars.plots,
                       ncol=2)
@@ -290,11 +365,11 @@ patchwork::wrap_plots(vars.plots,
 ```{r}
 
 ## Tensor results
-tensor.results <- map(score.names, function(score_col){
+sce@metadata$tensor.results <- map(score.names, function(score_col){
     liana_tensor_c2c(context_df_dict,
                      score_col = score_col,
                      rank = RANK,
-                     conda_env = NULL,
+                     conda_env = "cell2cell", ### !!! Rework basilisk call fun
                      how='outer' # outer is super bad - there might be something wrong
                      ) %>%
         pluck("factors") %>%
@@ -302,13 +377,15 @@ tensor.results <- map(score.names, function(score_col){
     }) %>% 
     setNames(score.names)
 
-tensor.scores <-  map(tensor.results, ~.x$contexts %>%
-    select(-sample, -condition) %>%
-    as.data.frame() %>%
-    column_to_rownames("sample_condition") %>%
-    t())
+# Format tensor scores
+sce@metadata$tensor.scores <-  
+    map(sce@metadata$tensor.results,
+        ~.x$contexts %>%
+            select(-sample, -condition) %>%
+            as.data.frame() %>%
+            column_to_rownames("sample_condition") %>%
+            t())
 
-# Save all results to SCE
 ```
 
 Plot Context (Factor) scores
@@ -323,32 +400,42 @@ overview.plots <- tensor.results %>%
 
 ```{r}
 # Take scores from the MOFA objects
-lr.scores <- map(mofa.results, ~.x %>% pluck("data") %>% 
-                     map(function(lr.mat){
-                         lr.mat <- lr.mat[[1]] %>%
-                             as_tibble(rownames="lr") %>%
-                             replace(is.na(.), 0) #!!
-                         
-                     }) %>%
-                     bind_rows() %>%
-    as.data.frame() %>%
-    column_to_rownames("lr")
-                ) %>%
-    setNames(names(mofa.results))
+sce@metadata$lr.scores <- map(metadata(sce)$mofa.results,
+                              ~.x %>% pluck("data") %>% 
+                                  map(function(lr.mat){
+                                      lr.mat <- lr.mat[[1]] %>%
+                                          as_tibble(rownames="lr") %>%
+                                          replace(is.na(.), 0) #!!
+                                      }) %>%
+                                  bind_rows() %>%
+                                  as.data.frame() %>%
+                                  column_to_rownames("lr")
+                              ) %>%
+    setNames(names(metadata(sce)$mofa.results))
 
-# Save all results to SCE
+## Quicksave object /w all factors
+quickResaveHDF5SummarizedExperiment(sce)
+
 ```
 
 
-### Evaluate
+
+
+### Re-load object
 ```{r}
+sce <- HDF5Array::loadHDF5SummarizedExperiment(str_glue("data/{KEY}/{KEY}_filt_sce"))
+```
+
+### Plot Evaluate
+```{r}
+
 library(ranger)
 
 eval_res <- score.names %>%
     map(function(x){
-        scores.list <- list("LRscores" = lr.scores[[x]],
-                            "MOFA" = mofa.scores[[x]],
-                            "Tensor" = tensor.scores[[x]]
+        scores.list <- list("LRscores" = metadata(sce)$lr.scores[[x]],
+                            "MOFA" = metadata(sce)$mofa.scores[[x]],
+                            "Tensor" = metadata(sce)$tensor.scores[[x]]
                             )
         
         res <- imap(scores.list, function(s, method){
@@ -375,13 +462,14 @@ eval_res <- score.names %>%
 
 eval_res %>%
     ggplot(aes(x=oob_error,
+               colour=method, 
                y=total_val,
-               colour = method, 
                shape = score)) +
-    geom_point(size=10) +
+    geom_point(size=8) +
     theme_minimal() +
     lims(x = c(0,1),
-         y = c(0,1))
+         y = c(0,1)
+         )
 ```
 
 
