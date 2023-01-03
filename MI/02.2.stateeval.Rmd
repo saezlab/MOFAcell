@@ -1,0 +1,558 @@
+---
+title: "02.stateeval"
+author: "Ricardo Ramirez"
+date: "8/22/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Introduction
+
+In here we are gonna test which genes of the observed program within a cell-type is consequence of a global response or the emergence of a cell-state
+
+The relationship between this depends on the amount of variability of pseudobulk expressions that is associated with cell-state (from scell data) or with pure conditions
+
+The requirements for this analysis are pseudobulk data from cell-types with annotations about condition. State pseudobulk data coming from single cell RNA seq and the loadings obtained after running MOFAcell downstream pipelines
+
+```{r setup, include=FALSE}
+library(tidyverse)
+source("MOFAcell/code/MOFAcellprep.R")
+```
+
+# Recovering pseudobulk data from conditions
+
+```{r}
+cond_pb <- readRDS("./data_MI/mi_pb_red.rds") %>%
+  dplyr::mutate(feature = strsplit(feature, "_") %>%
+                  map_chr(., ~.x[[2]]))
+```
+
+```{r}
+annotation_names <- tibble(patient_group = c("group_1", "group_2", "group_3"),
+                           patient_group_name = c("myogenic-enriched", "ischemic-enriched", "fibrotic-enriched"))
+
+```
+
+
+```{r}
+annotation_names <- tibble(patient_group = c("group_1", 
+                                             "group_2", 
+                                             "group_3"),
+                           patient_group_name = c("myogenic-enriched", 
+                                                  "ischemic-enriched", 
+                                                  "fibrotic-enriched"))
+
+batch_info <- read_csv("./data_MI/snrna_batch_ann.csv") %>%
+  select(orig.ident, batch) %>%
+  unique()
+
+sample_dict <- read_csv("./data_MI/rna_patient_anns_revisions.csv",show_col_types = F) %>%
+  left_join(annotation_names, by = "patient_group") %>%
+  dplyr::select(-patient_group) %>%
+  dplyr::rename("patient_group" = patient_group_name) %>%
+  dplyr::mutate(patient_group = factor(patient_group, 
+                                       levels = c("myogenic-enriched", "ischemic-enriched", "fibrotic-enriched"))) %>%
+  #dplyr::select(-sample_id) %>%
+  unique()
+
+sample_dict_red <- sample_dict %>%
+  left_join(batch_info, by = c("sample_id" = "orig.ident")) %>%
+  dplyr::select(patient_region_id, major_labl, patient_group, batch) %>%
+  unique() %>%
+  dplyr::rename("sample" = patient_region_id)
+
+meta <- sample_dict_red
+```
+
+Creating useful data frame
+
+```{r}
+cond_pb <- cond_pb %>%
+  left_join(meta)
+
+head(cond_pb)
+```
+
+# Recover state pseudobulk (similarly as the processing done in MOFAcell)
+
+```{r}
+state_pb <- read_csv("./data_MI/pb_data_states.csv")
+
+colnames(state_pb)[1] <- "sample_id"
+
+state_pb <- state_pb %>%
+  column_to_rownames("sample_id") %>%
+  as.matrix() %>%
+  t()
+
+state_coldata <- read_csv("./data_MI/pb_coldata_states.csv")[, -1] %>%
+  column_to_rownames("colname") %>%
+  dplyr::select(cell_type, cell_state, patient_region_id, patient_group, counts) %>%
+  dplyr::rename("donor_id" = "patient_region_id",
+                "cell_counts" = "counts")
+
+
+# Define views of interest in ct
+exclude_ct <- c("Mast", "Neuronal", "prolif", "Adipo", "Lymphoid", "PC", "vSMCs")
+
+cts <- state_coldata$cell_type %>%
+  unique()
+
+cts <- cts[! cts %in% exclude_ct]
+
+# Do all processing of counts matrices
+state_pb <- create_init_exp(counts = state_pb,
+                            coldata = state_coldata) %>%
+  filt_profiles(pb_dat = .,
+                ncells = 25,
+                cts = cts) %>%
+  filt_gex_byexpr(pb_dat_list = .,
+                  min.count = 50,
+                  min.prop = 0.1) %>%
+  tmm_trns(pb_dat_list = .) %>%
+  pb_dat2long(pb_dat_list = .)
+
+head(state_pb)
+```
+
+# Import loadings
+
+```{r}
+# In this function we separate loading genes from
+# positive and negative loadings, and estimate celltypes
+
+clean_loads <- function(loadings, sep = "_") {
+  
+  c_load <- loadings %>%
+    dplyr::mutate(ct = strsplit(celltype,"_") %>%
+                    map_chr(., ~.x[1]),
+                  class = strsplit(celltype,"_") %>%
+                    map_chr(., ~.x[2])) %>%
+    dplyr::select(gene, ct, class)
+  
+  return(c_load)
+  
+}
+
+```
+
+
+```{r}
+loadings <- read_csv("./results/MI/MOFA_mcell/factor_desc/Factor1_char/loadings.csv") %>%
+  clean_loads(.) %>%
+  dplyr::rename("view" = "ct",
+                "feature" = "gene")
+
+head(loadings)
+```
+
+# First enrich cell-state markers into the loading matrix
+
+```{r}
+GSE_analysis = function(geneList,Annotation_DB){
+  
+  geneList = geneList[geneList %in% unique(unlist(Annotation_DB))]
+  
+  ResultsDF = matrix(0,nrow = length(Annotation_DB),ncol = 5)
+  rownames(ResultsDF) = names(Annotation_DB)
+  colnames(ResultsDF) = c("GenesInPathway","GenesInList","GeneNames","p_value","corr_p_value")
+  
+  DB_genecontent = length(unique(unlist(Annotation_DB)))
+  GenesDB = DB_genecontent 
+  SelectedGenes = length(geneList)
+  
+  for(gset in rownames(ResultsDF)){
+    GP = length(Annotation_DB[[gset]])
+    GL = length(intersect(Annotation_DB[[gset]],geneList))
+    
+    ResultsDF[gset,"GenesInList"] = GL
+    ResultsDF[gset,"GenesInPathway"] = GP
+    ResultsDF[gset,"GeneNames"] = paste(intersect(Annotation_DB[[gset]],geneList),collapse = ",")
+    ResultsDF[gset,"p_value"] = phyper(q=GL - 1, m=GP, n=GenesDB-GP, k=SelectedGenes, lower.tail = FALSE, log.p = FALSE)
+  }
+  
+  ResultsDF[,"corr_p_value"] = p.adjust(ResultsDF[,"p_value"],method = "BH")
+  ResultsDF = data.frame(ResultsDF,stringsAsFactors = F)
+  ResultsDF = ResultsDF[order(ResultsDF[,"p_value"]),]
+  
+  ResultsDF = ResultsDF %>% 
+    rownames_to_column("gset") %>% 
+    mutate_at(c("GenesInPathway","GenesInList",
+                "p_value","corr_p_value"), 
+              as.numeric) %>% 
+    dplyr::arrange(corr_p_value,GenesInList)
+  
+  return(ResultsDF)
+}
+```
+
+```{r}
+# State markers from the Kuppe et. al. paper
+
+state_mrkrs <- readRDS(file = "./data_MI/state_genesets_list.rds")
+
+enrichment_per_ct <- set_names(cts) %>%
+  map(., function(ct) {
+    
+    useful_states <- grepl(ct, names(state_mrkrs))
+    useful_states <- state_mrkrs[useful_states]
+    
+    enrichment <- dplyr::filter(loadings, view == ct) %>%
+      group_by(view,class) %>%
+      nest() %>%
+      dplyr::mutate(data = map(data, ~.x[[1]])) %>%
+      dplyr::mutate(enrichment = map(data, GSE_analysis, Annotation_DB = useful_states)) %>%
+      dplyr::select(view,class, enrichment) %>%
+      unnest(cols = c(enrichment)) %>%
+      dplyr::select(view, class, gset, corr_p_value)
+    
+    return(enrichment)
+  })
+
+plt_per_ct <- map(enrichment_per_ct, function(dat) {
+  
+  df_plt <- dat %>%
+    dplyr::mutate(MOFA_loading = paste0(view,"_",class),
+                  logpval = -log10(corr_p_value)) %>%
+    dplyr::rename("state" = gset)
+  
+  
+  enrich_plt <- ggplot(df_plt, aes(y = state, x = MOFA_loading, size = logpval)) +
+    geom_point() +
+    theme_minimal() +
+    theme(axis.text.x = element_text(size = 11, angle = 90, hjust = 0, vjust = 0.5),
+          axis.text.y = element_text(size = 11)) +
+    coord_equal()
+  
+  return(enrich_plt)
+  
+})
+
+```
+
+```{r, fig.height=3, fig.width= 5}
+
+pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/state_relationship.pdf", height = 2.5, width = 4.5)
+walk(plt_per_ct, plot)
+dev.off()
+```
+
+# Run state evaluation
+
+The idea behind this evaluation is that for a given collection of pseudobulk samples of cell-states per patient, one can infer for each gene in the MOFAcell loading matrix if its gene expression is better explained by the cell-state label or the patient grouping. The biological intuition is that whilst functional cell-states emerge in case control studies upon disease contexts, it is still the case that there is a homogeneus response that is redistributed across all states.
+
+Here we calculate for the whole matrix two types of ANOVAs, first, we calculate eta-squared scores to measure the variance explained by the patient grouping variable, and later by the state grouping variable
+
+```{r}
+estimate_statevsglobal = function(state_pb, 
+                                  loadings, 
+                                  ct = "CM",
+                                  cond_label = "patient_group",
+                                  state_label = "cell_state") {
+  
+  # Filter elements to ct of interest
+  # and genes of interest
+  
+  ct_loads <- loadings %>%
+    dplyr::filter(view %in% ct)
+  
+  ct_state <- state_pb %>%
+    dplyr::filter(view %in% ct,
+                  feature %in% ct_loads[["feature"]])
+  
+  # ct_cond <- cond_pb %>%
+  #   dplyr::filter(view %in% ct,
+  #                 feature %in% ct_loads[["feature"]])
+  
+  var1 = paste0(state_label, "_", "etasq")
+  var2 = paste0(state_label, "_", "pval")
+  
+  # Perform ANOVA for the state label
+  state_var <- ct_state %>%
+    group_by(feature) %>%
+    nest() %>%
+    dplyr::mutate(var_expl = map(data, function(dat) {
+      
+      gene_aov <- aov(as.formula(paste0("value ~ ", state_label)), data = dat)
+      
+      aov_stats <- sjstats::anova_stats(gene_aov) %>%
+        as.data.frame() %>%
+        dplyr::filter(term == state_label) %>%
+        dplyr::select(term, etasq, p.value)
+    })) %>%
+    dplyr::select(feature, var_expl) %>%
+    unnest() %>%
+    dplyr::arrange(desc(etasq)) %>%
+    rename("etasq" = var1,
+           "p.value" = var2) %>%
+    dplyr::select(-term)
+  
+  # Perform ANOVA for the condition label
+  
+  var1 = paste0(cond_label, "_", "etasq")
+  var2 = paste0(cond_label, "_", "pval")
+  
+  cond_var <- ct_state %>%
+    group_by(feature) %>%
+    nest() %>%
+    dplyr::mutate(var_expl = map(data, function(dat) {
+      
+      gene_aov <- aov(as.formula(paste0("value ~ ", cond_label)), data = dat)
+      
+      aov_stats <- sjstats::anova_stats(gene_aov) %>%
+        as.data.frame() %>%
+        dplyr::filter(term == cond_label) %>%
+        dplyr::select(term, etasq, p.value)
+    })) %>%
+    dplyr::select(feature, var_expl) %>%
+    unnest() %>%
+    dplyr::arrange(desc(etasq)) %>%
+    rename("etasq" = var1,
+           "p.value" = var2) %>%
+    dplyr::select(-term)
+  
+  
+  # Perform ANOVA for the condition label
+  # cond_var <- ct_cond %>%
+  #   group_by(feature) %>%
+  #   nest() %>%
+  #   dplyr::mutate(var_expl = map(data, function(dat) {
+  #     
+  #     gene_aov <- aov(as.formula(paste0("value ~ ", cond_label)), data = dat)
+  #     
+  #     aov_stats <- sjstats::anova_stats(gene_aov) %>%
+  #       as.data.frame() %>%
+  #       dplyr::filter(term == cond_label) %>%
+  #       dplyr::select(term, etasq, p.value)
+  #   })) %>%
+  #   dplyr::select(feature, var_expl) %>%
+  #   unnest() %>%
+  #   dplyr::arrange(desc(etasq)) %>%
+  #   rename("etasq" = var1,
+  #          "p.value" = var2) %>%
+  #   dplyr::select(-term)
+  
+  eta_sum <- left_join(state_var, cond_var, by = "feature") %>%
+    ungroup() %>%
+    mutate(cell_state_pval = p.adjust(cell_state_pval)) %>%
+    mutate(patient_group_pval = p.adjust(patient_group_pval)) %>%
+    mutate(global_ratio =patient_group_etasq/cell_state_etasq)
+  
+  return(eta_sum)
+}
+
+```
+
+```{r}
+plot_eta <- function(eta_sum, 
+                    cond_label = "patient_group",
+                    state_label = "cell_state",
+                    p_thrsh = 0.01) {
+  
+  pval_cond <- paste0(cond_label, "_", "pval")
+  pval_state <- paste0(state_label, "_", "pval")
+  
+  eta_sum[, pval_cond] <- eta_sum[, pval_cond] < p_thrsh
+  eta_sum[, pval_state] <- eta_sum[, pval_state] < p_thrsh
+  eta_sum[, "pval_both"] <- eta_sum[, pval_state] & eta_sum[, pval_cond]
+  
+  eta_sum[, pval_cond] <- ifelse(eta_sum[, pval_cond] == TRUE,
+                                 cond_label,
+                                 "")
+  
+  eta_sum[, pval_state] <- ifelse(eta_sum[, pval_state] == TRUE,
+                                 state_label,
+                                 "")
+  
+  eta_sum <- eta_sum %>%
+    mutate(pval_both = ifelse(pval_both == TRUE,
+                              "both",paste0(cell_state_pval, patient_group_pval))) %>%
+     mutate(pval_both = ifelse(pval_both == "",
+                              "none", pval_both)) %>%
+    dplyr::rename("significance"= "pval_both")
+  
+  
+  eta_plt <- ggplot(eta_sum, aes(x = patient_group_etasq, y = cell_state_etasq, color = significance)) +
+    geom_point() +
+    theme_minimal() +
+    xlim(c(0,1)) +
+    ylim(c(0,1)) +
+    theme(axis.text = element_text(size =12),
+          axis.title = element_text(size =12),
+          legend.text=element_text(size=10))
+  
+  return(eta_plt)
+  
+}
+
+```
+
+
+```{r}
+CM_eta <- estimate_statevsglobal(state_pb = state_pb,
+                       loadings = loadings,
+                       ct = "CM",
+                       cond_label = "patient_group",
+                       state_label = "cell_state") %>%
+  mutate(ct = "CM") 
+
+eta_plt <- CM_eta %>%
+  plot_eta() +
+  ylab("expl. variance by cell state") +
+  xlab("expl. variance by condition") +
+  guides(colour = guide_legend(override.aes = list(size=3)))
+
+
+pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/CM_eta_plt.pdf", height = 3.5, width = 4.7)
+
+plot(eta_plt)
+
+dev.off()
+
+```
+
+
+```{r}
+Fib_eta <- estimate_statevsglobal(state_pb = state_pb,
+                       loadings = loadings,
+                       ct = "Fib",
+                       cond_label = "patient_group",
+                       state_label = "cell_state") %>%
+  mutate(ct = "Fib") 
+
+Fib_eta %>%
+  plot_eta() %>%
+  plot()
+```
+
+```{r}
+Endo_eta <- estimate_statevsglobal(state_pb = state_pb,
+                       loadings = loadings,
+                       ct = "Endo",
+                       cond_label = "patient_group",
+                       state_label = "cell_state") %>%
+  mutate(ct = "Endo") 
+
+Endo_eta %>%
+  plot_eta() %>%
+  plot()
+```
+
+```{r}
+Myeloid_eta <- estimate_statevsglobal(state_pb = state_pb,
+                       loadings = loadings,
+                       ct = "Myeloid",
+                       cond_label = "patient_group",
+                       state_label = "cell_state") %>%
+  mutate(ct = "Myeloid") 
+
+Myeloid_eta %>%
+  plot_eta() %>%
+  plot()
+```
+
+# Global responses across cell types
+
+```{r}
+global_ratio_plt <- bind_rows(CM_eta, Fib_eta, 
+          Endo_eta, Myeloid_eta) %>%
+  ggplot(aes(x = ct, y = log2(global_ratio))) +
+  geom_violin() +
+  geom_hline(yintercept = 0) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, size = 12, hjust = 1, vjust = 0.5),
+        axis.text.y = element_text(size = 12),
+        axis.title = element_text(size =12)) +
+  xlab("") +
+  ylab("log2(condition/state)")
+
+plot(global_ratio_plt)
+
+pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/eta_ratio_plt.pdf", height = 3.5, width = 3.5)
+
+plot(global_ratio_plt)
+
+dev.off()
+
+```
+
+# Examples of genes 
+
+# NFATC4
+
+```{r}
+CM_eta %>%
+  dplyr::filter(feature == "NFATC4")
+```
+
+
+```{r}
+state_ex_plt <- state_pb %>%
+  dplyr::filter(view == "CM",
+                feature == "NFATC4") %>%
+  ggplot(aes(x = cell_state, y = value)) +
+  geom_boxplot() +
+  geom_point() +
+  theme_minimal() +
+  ylab("expression") +
+  xlab("") +
+  theme(axis.text.x = element_text(angle = 90, size = 12, hjust = 1, vjust = 0.5),
+        axis.text.y = element_text(size = 12),
+        axis.title = element_text(size =12))
+
+cond_ex_plt <- state_pb %>%
+  dplyr::filter(view == "CM",
+                feature == "NFATC4") %>%
+  left_join(annotation_names) %>%
+  ggplot(aes(x = patient_group_name, y = value)) +
+  geom_boxplot() +
+  geom_point() +
+  theme_minimal() +
+  ylab("expression") +
+  xlab("") +
+  theme(axis.text.x = element_text(angle = 90, size = 12, hjust = 1, vjust = 0.5),
+        axis.text.y = element_text(size = 12),
+        axis.title = element_text(size =12))
+
+expression_plt <- cowplot::plot_grid(cond_ex_plt, state_ex_plt, align = "hv", ncol = 2,rel_widths = c(0.75,1))
+
+pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/CM_NFATC4_example.pdf", height = 3.5, width = 3.5)
+
+plot(expression_plt)
+
+dev.off()
+
+```
+
+# MYH7
+
+```{r}
+CM_eta %>%
+  dplyr::filter(feature == "MYH7")
+```
+
+```{r}
+state_pb %>%
+  dplyr::filter(view == "CM",
+                feature == "MYH7") %>%
+  ggplot(aes(x = cell_state, y = value)) +
+  geom_boxplot() +
+  geom_point() +
+  theme(axis.text.x = element_text(angle = 90, size = 12, hjust = 1, vjust = 0.5),
+        axis.text.y = element_text(size = 12))
+
+state_pb %>%
+  dplyr::filter(view == "CM",
+                feature == "MYH7") %>%
+  left_join(annotation_names) %>%
+  ggplot(aes(x = patient_group_name, y = value)) +
+  geom_boxplot() +
+  geom_point() +
+  theme(axis.text.x = element_text(angle = 90, size = 12, hjust = 1, vjust = 0.5),
+        axis.text.y = element_text(size = 12))
+```
+
+
+
+

@@ -1,0 +1,107 @@
+---
+title: "Analyse factors"
+author: "Ricardo Ramirez"
+date: "7/23/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Decomposing factor information
+
+We will associate each factor with conditions of interest and modularize the genes
+into coordinated responses
+
+```{r}
+source("./MOFAcell/code/factorutils.R")
+```
+
+# Define the model to analyse
+
+```{r}
+model_outfile <- "./results/MI/MOFA_mcell/MI_model6factors.hdf5"
+model <- MOFA2::load_model(model_outfile)
+
+pb_data <- readRDS("./data_MI/mi_pb_red.rds")
+
+out_alias <- "./results/MI/MOFA_mcell/factor_desc"
+```
+
+```{r}
+annotation_names <- tibble(patient_group = c("group_1", 
+                                             "group_2", 
+                                             "group_3"),
+                           patient_group_name = c("myogenic-enriched", 
+                                                  "ischemic-enriched", 
+                                                  "fibrotic-enriched"))
+
+batch_info <- read_csv("./data_MI/snrna_batch_ann.csv") %>%
+  select(orig.ident, batch) %>%
+  unique()
+
+sample_dict <- read_csv("./data_MI/rna_patient_anns_revisions.csv",show_col_types = F) %>%
+  left_join(annotation_names, by = "patient_group") %>%
+  dplyr::select(-patient_group) %>%
+  dplyr::rename("patient_group" = patient_group_name) %>%
+  dplyr::mutate(patient_group = factor(patient_group, 
+                                       levels = c("myogenic-enriched", "ischemic-enriched", "fibrotic-enriched"))) %>%
+  #dplyr::select(-sample_id) %>%
+  unique()
+
+sample_dict_red <- sample_dict %>%
+  left_join(batch_info, by = c("sample_id" = "orig.ident")) %>%
+  dplyr::select(patient_region_id, major_labl, patient_group, batch) %>%
+  unique() %>%
+  dplyr::rename("sample" = patient_region_id)
+
+meta <- sample_dict_red
+```
+
+# Factor 1
+
+```{r}
+summarize_factor_lite(model = model,
+                 factor = "Factor1",
+                 meta = meta,
+                 out_alias = out_alias,
+                 load_cor_thrs = 0.1)
+```
+
+## Results for paper
+
+## Jaccard
+
+```{r}
+read_csv("./results/MI/MOFA_mcell/factor_desc/Factor1_char/jaccard_ix.csv") %>%
+  group_by(direction) %>%
+  summarize(mean_jac = mean(jaccard_ix))
+```
+
+```{r}
+read_csv("./results/MI/MOFA_mcell/factor_desc/Factor1_char/model_size.csv") %>%
+  group_by(ctype) %>%
+  summarize(ngenes = sum(used_genes))
+
+read_csv("./results/MI/MOFA_mcell/factor_desc/Factor1_char/model_size.csv") %>%
+  group_by(ctype) %>%
+  summarize(ngenes = sum(used_genes)) %>%
+  pull(ngenes) %>%
+  median()
+```
+
+
+```{r}
+read_csv("./results/MI/MOFA_mcell/factor_desc/Factor1_char/model_size.csv") %>%
+  group_by(direction) %>%
+  summarize(median_genes = median(used_genes)) 
+```
+
+
+```{r}
+loadings <- read_csv("./results/MI/MOFA_mcell/factor_desc/Factor1_char/loadings.csv") %>%
+  dplyr::group_by(gene) %>%
+  summarize(n_time = n()) %>%
+  arrange(desc(n_time))
+```
+
+

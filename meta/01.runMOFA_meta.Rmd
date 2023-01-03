@@ -1,0 +1,344 @@
+---
+title: "Using MOFAcell to perform metaanalysis"
+author: "Ricardo Ramirez"
+date: "10/31/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r, message=FALSE, warning=FALSE}
+library(MOFA2)
+library(tidyverse)
+library(HDF5Array)
+library(ComplexHeatmap)
+library(scater)
+library(scran)
+library(uwot)
+library(edgeR)
+library(circlize)
+library(compositions)
+source("./MOFAcell/code/MOFAcellprep.R")
+source("./MOFAcell/code/factorutils.R")
+```
+
+# Import Broad Data
+
+```{r}
+# Defining the patient annotations -----------------------------------------------------------------
+broad_meta <- read_csv("./data_HCMDCM_Nature/meta_data.csv")[,-1] %>%
+  dplyr::mutate("group" = "group_0")
+# Importing coldata of the matrices
+coldat_broad <- read_csv("./data_HCMDCM_Nature/pb_coldata.csv",
+                   show_col_types = FALSE)[,-1] %>%
+  column_to_rownames("colname") %>%
+  dplyr::rename(ncells = "counts")
+# Read normalized data
+broad_dat <- readRDS("./data_HCMDCM_Nature/pb_red.rds")
+
+broad_meta %>% dplyr::group_by(disease) %>% summarise(n())
+```
+
+# Import Science Data
+
+```{r}
+# Defining the patient annotations -----------------------------------------------------------------
+hub_meta <- read_csv("./data_DCMACM_Science/meta_data.csv")[,-1] %>%
+    dplyr::mutate("group" = "group_1")
+
+hub_meta %>% dplyr::group_by(disease) %>% summarise(n())
+
+# Disease DF
+disease_dict <- hub_meta$disease %>% 
+  unique() %>% 
+  enframe(value = "disease", 
+          name = "dis_code")
+
+disease_dict$dis_code <- c("NF", "DCM", 
+                           "ARVC", "NCC")
+
+hub_meta <- left_join(hub_meta, disease_dict, by = "disease")
+hub_meta$disease <- hub_meta$dis_code
+
+# Importing coldata of the matrices
+coldat_hub <- read_csv("./data_DCMACM_Science/pb_coldata.csv",
+                   show_col_types = FALSE)[,-1] %>%
+  column_to_rownames("colname") %>%
+  dplyr::rename(ncells = "counts")
+# Read normalized data w/ prior genes from broad
+hub_dat <- readRDS("./data_DCMACM_Science/pb_red_wprior.rds")
+```
+
+# Filter Broad data to contain only Science genes
+
+```{r}
+broad_dat <- broad_dat %>%
+  dplyr::filter(feature %in% unique(hub_dat$feature))
+```
+
+# Generating the meta analysis
+
+```{r}
+broad_dat <- broad_dat %>%
+  mutate(group = "group_0")
+
+hub_dat <- hub_dat %>%
+  mutate(group = "group_1")
+
+```
+
+```{r}
+all_dat <- dplyr::bind_rows(broad_dat, hub_dat)
+
+write_csv(all_dat, "./results/META/alldat.csv")
+```
+
+```{r}
+MOFAobject <- create_mofa(all_dat)
+
+data_opts <- get_default_data_options(MOFAobject)
+
+data_opts$scale_groups <- TRUE
+
+model_opts <- get_default_model_options(MOFAobject)
+
+model_opts$spikeslab_weights <- FALSE
+
+model_opts$num_factors <- 6
+
+train_opts <- get_default_training_options(MOFAobject)
+
+# Prepare MOFA model:
+MOFAobject <- prepare_mofa(
+  object = MOFAobject,
+  data_options = data_opts,
+  model_options = model_opts,
+  training_options = train_opts
+)
+
+# Train model:
+outfile <- file.path("./results/META/MOFA_mcell/", "model.hdf5")
+
+model <- run_mofa(MOFAobject, outfile)
+```
+
+```{r}
+all_meta <- dplyr::bind_rows(broad_meta, hub_meta) %>%
+  dplyr::rename("sample" = "donor_id")
+
+write_csv(all_meta, "./results/META/allmeta.csv")
+```
+
+# Downstream analysis
+
+## Association of factors to covariates
+
+We will associate clinical covariates to factor scores. For each factor score, we will perform an analysis of variance to clinical covariates of interest. 
+
+In this specific case we will identify which factors associate with the histological description
+
+## Association of factors to covariates
+
+We will associate clinical covariates to factor scores. For each factor score, we will perform an analysis of variance to clinical covariates of interest. 
+
+In this specific case we will identify which factors associate with the histological description
+
+```{r}
+get_allfscores <- function(model, meta, factor) {
+  
+  factor_scores <- rbind(get_factors(model, factors = "all", groups = "all")[[1]],
+                     get_factors(model, factors = "all", groups = "all")[[2]]) %>%
+    as.data.frame() %>%
+    rownames_to_column("sample") %>%
+    left_join(meta, by = "sample")  %>%
+    pivot_longer(-colnames(meta), names_to = "Factor")
+  
+  return(factor_scores)
+  
+}
+```
+
+
+```{r}
+get_associated_factors <- function(meta, model, predicted_label) {
+  
+  factors <- get_allfscores(model = model, meta = meta)
+  
+  # Get factors associated with patient group
+  factors <- factors %>%
+  dplyr::select_at(c("sample", predicted_label, "Factor", "value")) %>%
+  na.omit() %>%
+  group_by(Factor) %>%
+  nest() %>%
+  mutate(pvalue = map(data, function(dat) {
+    
+    gene_aov <- aov(as.formula(paste0("value ~ ", predicted_label)), data = dat) %>%
+      broom::tidy() %>%
+      dplyr::filter(term == predicted_label) %>%
+      dplyr::select(term, p.value)
+    
+    return(gene_aov)
+  })) %>%
+  tidyr::unnest(pvalue) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(adj_pvalue = p.adjust(p.value))
+
+  expl_var <- factors %>%
+  dplyr::select(Factor, term, p.value, adj_pvalue)
+
+  return(expl_var)
+  
+}
+```
+
+```{r}
+expl_var_pgroup <- get_associated_factors(meta = all_meta,model = model,
+                                          predicted_label = "disease")
+
+expl_var_pgroup
+```
+
+```{r}
+get_allfscores(model = model, meta = all_meta) %>%
+  dplyr::filter(Factor %in% c("Factor1")) %>%
+  ggplot(aes(x = disease, y = value, fill = group)) +
+  geom_boxplot() +
+  geom_jitter() +
+  theme_classic()
+  facet_wrap(. ~ group)
+```
+
+```{r, fig.height=3, fig.width=4.5}
+score_plt <- get_allfscores(model = model, meta = all_meta) %>%
+  dplyr::filter(Factor %in% c("Factor1", "Factor2")) %>%
+  pivot_wider(names_from = Factor, values_from = value) %>%
+  ggplot(., aes(x = Factor1,
+                y = Factor2,
+                color = disease,
+                shape = group)) +
+  geom_point(size = 2.5) +
+  theme_classic() +
+  theme(axis.text = element_text(size =12),
+        axis.title = element_text(size =12))
+
+plot(score_plt)
+
+pdf("./results/META/FactorScoresScatter.pdf",height = 3,width = 4.5)
+
+plot(score_plt)
+
+dev.off()
+
+```
+
+```{r}
+expl_var_sex <- get_associated_factors(meta = all_meta,
+                                       model = model,
+                                       predicted_label = "sex")
+expl_var_sex
+```
+
+```{r}
+expl_var_study <- get_associated_factors(meta = all_meta,
+                                         model = model,
+                                         predicted_label = "group")
+expl_var_study
+```
+
+## Explained variance per factor and summary heatmap
+
+We recover the explained variance per view per factor to evaluate if coordinated gene expression processes are coordinated between all the cell types or exclusive to only a group of them
+
+```{r, fig.height=8, fig.width=3.5}
+# Make the heatmap similar to scITD
+row_anns <- rbind(get_factors(model, 
+                              factors = "all", 
+                              groups = "all")[[1]],
+                     get_factors(model, 
+                                 factors = "all", 
+                                 groups = "all")[[2]]) %>% 
+  rownames() %>% 
+  enframe() %>% 
+  dplyr::select(value) %>% 
+  left_join(all_meta, by = c("value" = "sample")) %>%
+  dplyr::select(disease, sex, group)
+
+row_ha = rowAnnotation(patient_group = row_anns$disease,
+                       sex = row_anns$sex,
+                       study = row_anns$group)
+
+
+assoc_pvals <- bind_rows("disease" = -log10(expl_var_pgroup$adj_pvalue),
+                         "sex" = -log10(expl_var_sex$adj_pvalue),
+                         "study" = -log10(expl_var_study$adj_pvalue)) %>%
+  as.matrix()
+
+# Add explain variance per cell-type per group
+r2_per_factor_0 <- model@cache$variance_explained$r2_per_factor[[1]]
+colnames(r2_per_factor_0) <- paste0("g0_", colnames(r2_per_factor_0))
+
+r2_per_factor_1 <- model@cache$variance_explained$r2_per_factor[[2]]
+colnames(r2_per_factor_1) <- paste0("g1_", colnames(r2_per_factor_1))
+
+r2_per_factor <- cbind(r2_per_factor_0, r2_per_factor_1)
+
+column_ha = HeatmapAnnotation("r2" = r2_per_factor,
+                              "assocs" = assoc_pvals,
+                              border = TRUE,
+                              gp = gpar(col = "grey"))
+
+
+scores_hmap <- Heatmap(rbind(get_factors(model, 
+                              factors = "all", 
+                              groups = "all")[[1]],
+                     get_factors(model, 
+                                 factors = "all", 
+                                 groups = "all")[[2]]), 
+        name = "factor_scores", 
+        right_annotation = row_ha,
+        top_annotation = column_ha,
+        cluster_columns = FALSE, show_row_dend = FALSE, show_row_names = FALSE)
+
+scores_hmap
+```
+
+## Paper stats
+
+### Recovered mean across all samples
+
+#Group 0 = Broad
+```{r}
+model@cache$variance_explained$r2_total$group_0
+model@cache$variance_explained$r2_total$group_0 %>% mean()
+```
+#Group 1 = Hubner
+```{r}
+model@cache$variance_explained$r2_total$group_1
+model@cache$variance_explained$r2_total$group_1 %>% mean()
+```
+
+### Factors associated with patient group
+```{r}
+useful_factors <- expl_var_pgroup %>%
+  dplyr::filter(adj_pvalue < 0.15) %>%
+  pull(Factor)
+
+print(useful_factors)
+
+model@cache$variance_explained$r2_per_factor$group_0[useful_factors,,drop = F] %>%
+  colSums()
+
+model@cache$variance_explained$r2_per_factor$group_0[useful_factors,,drop = F] %>%
+  colSums() %>%
+  mean()
+```
+
+```{r}
+model@cache$variance_explained$r2_per_factor$group_1[useful_factors,,drop = F] %>%
+  colSums()
+
+model@cache$variance_explained$r2_per_factor$group_1[useful_factors,,drop = F] %>%
+  colSums() %>%
+  mean()
+```
+

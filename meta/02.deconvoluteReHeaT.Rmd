@@ -1,0 +1,184 @@
+---
+title: "Deconvolute ReHeaT"
+author: "Ricardo Ramirez"
+date: "11/1/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+## MOFA cell for deconvolution
+
+Here we demonstrate that MOFA cell loadings can be used to deconvolute disease signals from ReHeaT
+
+```{r}
+library(tidyverse)
+library(MOFA2)
+source("./MOFAcell/code/factorutils.R")
+```
+
+
+```{r}
+model_outfile <- "./results/META/MOFA_mcell/model.hdf5"
+model <- MOFA2::load_model(model_outfile)
+pb_data <- read_csv("./results/META/alldat.csv")
+meta <- read_csv("./results/META/allmeta.csv")
+```
+
+
+```{r}
+# Get factor scorees
+factor_scores <- get_fscores(model = model,
+                               meta = meta,
+                               factor = "Factor1", group = T)
+# Get loadings
+factor_loadings <- get_floadings(model = model,
+                                   factor = "Factor1")
+
+```
+
+```{r}
+# Calculate disease scores for all samples ----------------------------------
+reheat <- readRDS("./data_reheat/METAheart.rds")
+
+dr_res <- map(reheat, function(x) {
+  
+  mat <- x$GEX %>%
+    t() %>%
+    scale() %>%
+    t()
+  
+  dR_run <- decoupleR::run_wmean(mat = mat, 
+                                 network = factor_loadings,
+                                 .source = ctype, 
+                                 .target = feature,
+                                 .mor = value) %>%
+    dplyr::filter(statistic == "wmean")
+  
+  dR_run <- dR_run  %>%
+    left_join(x$TARGETS %>%
+                dplyr::select(Sample, HeartFailure),
+              by = c("condition" = "Sample"))
+  
+}) %>%
+  enframe() %>%
+  unnest()
+```
+
+# Test the difference between cell-type disease scores across cell-types 
+
+```{r}
+ct_ds <- dr_res %>%
+  group_by(name, source) %>%
+  dplyr::mutate(scale_score = scale(score)[,1]) %>%
+  dplyr::mutate(HeartFailure = factor(HeartFailure, 
+                                      levels = c("yes", "no"))) %>%
+  nest() %>%
+  mutate(ds_t = map(data, function(dat) {
+    
+    t.test(scale_score ~ HeartFailure, data = dat, alternative = "less") %>%
+      broom::tidy()
+    
+  }))
+
+ct_ds_stat <- ct_ds %>%
+  dplyr::select(name, ds_t) %>%
+  unnest() %>%
+  arrange(-statistic) %>%
+  group_by(name) %>%
+  dplyr::mutate(p_adj = p.adjust(p.value)) %>%
+  dplyr::select(source, name, statistic, p.value, p_adj) %>%
+  dplyr::mutate(significance = ifelse(p_adj <= 0.2, "*", ""))
+```
+
+# Show the example of one study
+
+```{r, fig.height=3.5, fig.width= 2.5}
+example_violin <- ct_ds %>%
+  dplyr::filter(name == "Liu15_M") %>%
+  dplyr::select(name, source, data) %>%
+  unnest() %>%
+  dplyr::filter(source != "Lymphoid") %>%
+  dplyr::mutate(disease = ifelse(HeartFailure == "yes", "HeartFailure", "NonFailing")) %>%
+  ggplot(., aes(x  = disease, y = score)) +
+  geom_violin() +
+  theme_classic2() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  facet_wrap(.~source, nrow = 3) +
+  ylab("Factor 1 program") +
+  xlab("") +
+  ggtitle("Liu15_M")
+
+plot(example_violin)
+
+pdf("./results/META/bulk_deconv_example.pdf", height = 4, width = 2.5)
+plot(example_violin)
+dev.off()
+```
+
+
+```{r, fig.height=3.7, fig.width= 3.5}
+reheat_stats_plt <- ggplot(ct_ds_stat, aes(y = name, 
+                       x  = source, 
+                       fill = statistic,
+                       label = significance)) +
+  geom_tile() +
+  geom_text() +
+  scale_fill_gradient2() +
+  theme(axis.text = element_text(size =12),
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  ylab("") +
+  xlab("") +
+  coord_equal()
+
+plot(reheat_stats_plt)
+
+pdf("./results/META/reheat_stats_plt.pdf", height = 4, width = 4)
+plot(reheat_stats_plt)
+dev.off()
+```
+
+```{r, fig.height=4, fig.width= 4}
+scaled_stats <- ct_ds_stat %>%
+  arrange(name) %>%
+  dplyr::group_by(name) %>%
+  mutate(scaled_stat = (statistic - mean(statistic))/sd(statistic)) 
+
+scaled_stats_mat <- scaled_stats %>%
+  dplyr::select(source, name, scaled_stat) %>%
+  pivot_wider(names_from = name, values_from = scaled_stat) %>%
+  column_to_rownames("source") %>%
+  as.matrix()
+
+column_order <- hclust(dist(scaled_stats_mat))
+column_order <- column_order$labels[column_order$order]
+
+row_order <- hclust(dist(t(scaled_stats_mat)))
+row_order <- row_order$labels[row_order$order]
+
+scaled_stats %>%
+  dplyr::mutate(name = factor(name,
+                              levels = row_order),
+                source = factor(source,
+                                levels = column_order)) %>%
+  ggplot(., aes(y = name, 
+                       x  = source, 
+                       fill = scaled_stat,
+                       label = significance)) +
+  geom_tile() +
+  geom_text() +
+  scale_fill_gradient2() +
+  theme(axis.text = element_text(size =12),
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  ylab("") +
+  xlab("") +
+  coord_equal()
+```
+
+
+
+
+
+
+
+

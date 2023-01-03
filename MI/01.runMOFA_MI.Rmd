@@ -1,0 +1,614 @@
+---
+title: "Estimation of multicellular factors from MOFA"
+author:
+- name: "Ricardo O. Ramirez Flores"
+  affiliation: "Heidelberg University, Faculty of Medicine"
+  email: "roramirezf@uni-heidelberg.de"
+date: "`r Sys.Date()`"
+output:
+  BiocStyle::html_document:
+    toc_float: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r, message=FALSE, warning=FALSE}
+library(MOFA2)
+library(HDF5Array)
+library(ComplexHeatmap)
+library(circlize)
+source("./MOFAcell/code/MOFAcellprep.R")
+source("./MOFAcell/code/factorutils.R")
+```
+
+```{r, echo=FALSE}
+reticulate::use_condaenv(condaenv = "/Users/ricardoramirez/opt/miniconda3/envs/MOFA")
+```
+
+# Introduction
+
+MOFA can be used to identify coordinated gene expression programs of multiple cell types from single cell RNA-seq data. Similarly as other computational tools such as scITD or DIALOGUE, MOFA factors can be interpreted as shared gene programs between cell types, whose variability is associated to different covariates in complex experimental designs.
+
+In this markdown we will estimate "multicellular factors" from a single-cell RNA-seq dataset of human myocardial infarction patients and healthy donors from a study by Kuppe, Ramirez Flores, Li, et al.
+
+# Pseudobulk expression profiles and meta-data
+
+In this section we import a SingleCellExperiment containing the profiles of 27 combinations of patient and physiological samples at different time points after myocardial infarction as well as control samples.
+
+These specimens were classified in three major groups based on histological observations, nevertheless these are only approximations of a class
+
+```{r}
+# Defining the patient annotations -----------------------------------------------------------------
+annotation_names <- tibble(patient_group = c("group_1", "group_2", "group_3"),
+                           patient_group_name = c("myogenic-enriched", "ischemic-enriched", "fibrotic-enriched"))
+
+batch_info <- read_csv("./data_MI/snrna_batch_ann.csv") %>%
+  select(orig.ident, batch) %>%
+  unique()
+
+sample_dict <- read_csv("./data_MI/rna_patient_anns_revisions.csv",show_col_types = F) %>%
+  left_join(annotation_names, by = "patient_group") %>%
+  dplyr::select(-patient_group) %>%
+  dplyr::rename("patient_group" = patient_group_name) %>%
+  dplyr::mutate(patient_group = factor(patient_group, 
+                                       levels = c("myogenic-enriched", "ischemic-enriched", "fibrotic-enriched"))) %>%
+  #dplyr::select(-sample_id) %>%
+  unique()
+
+sample_dict_red <- sample_dict %>%
+  left_join(batch_info, by = c("sample_id" = "orig.ident")) %>%
+  dplyr::select(patient_region_id, major_labl, patient_group, batch) %>%
+  unique() 
+```
+
+```{r, eval = F, echo= TRUE}
+mi_pb <- loadHDF5SummarizedExperiment("./data_MI/integrated_rnasamples_ann_sce/")
+
+ids <- colData(mi_pb) %>% 
+  as.data.frame() %>% 
+  left_join(sample_dict, by = c("orig.ident" = "sample_id")) %>%
+  dplyr::select(cell_type, patient_region_id) %>%
+  DataFrame()
+
+mi_pb <- scuttle::sumCountsAcrossCells(x = mi_pb, 
+                              ids  = ids)
+
+assay(mi_pb, "counts") <- assay(mi_pb, "sum")
+```
+
+```{r, eval=F, echo=F}
+saveRDS(mi_pb, "./data_MI/mi_pb.rds")
+```
+
+```{r, eval=T, echo=F}
+mi_pb <- readRDS("./data_MI/mi_pb.rds")
+```
+
+Finally prepare the data for the universal input of MOFAcell preprocessing
+
+```{r, eval=T, echo=F}
+counts <- assay(mi_pb, "counts")
+coldata <- colData(mi_pb) %>%
+  as.data.frame() %>%
+  dplyr::rename("donor_id" = "patient_region_id",
+         "cell_counts" = "ncells") %>%
+  dplyr::mutate(colid = paste0(cell_type, "_", donor_id)) %>%
+  tibble::column_to_rownames("colid")
+
+colnames(counts) <- rownames(coldata)
+```
+
+```{r}
+coldata %>% dplyr::filter(cell_counts >= 25) %>%
+  group_by(cell_type) %>%
+  summarise(n = n())
+```
+
+### First process counts data via MOFA cell prep
+
+To make the analysis consistent with other tools, we used highly variable genes from PAGODA as suggested by scITD,
+however we filtered out lowly expressed genes and that could belong to a background signal.
+
+```{r}
+# Define views of interest in ct
+exclude_ct <- c("Mast", "Neuronal", "prolif", "Adipo")
+
+cts <- coldata$cell_type %>%
+  unique()
+
+cts <- cts[! cts %in% exclude_ct]
+
+#Define HVGs coming from pagoda2 analysis
+pagoda_hvgs <- readRDS("./scITDdata/hvg_list.rds")
+pagoda_hvgs <- pagoda_hvgs %>%
+  enframe("name","gene") %>%
+  unnest()
+
+# Filtering out black listed genes
+# Marker genes from Kuppe et al
+mrkr_genes <- read_csv("./data_MI/edgeR_cellmrkrs.csv")
+mrkr_genes <- mrkr_genes %>% #dplyr::filter(!name %in% exclude_ct) %>%
+  dplyr::filter(FDR < 0.01, logFC > 1) %>%
+  dplyr::select(name, gene) %>%
+  dplyr::rename("lineage" = name) %>%
+  group_by(gene) %>%
+  nest() %>%
+  dplyr::mutate(data = map(data, ~.x[[1]])) %>%
+  dplyr::mutate(gene_type = "marker_gene")
+
+# Here are genes that aren't cell type markers
+ok_genes <- pagoda_hvgs %>%
+  left_join(mrkr_genes, by = "gene") %>%
+  dplyr::filter(is.na(gene_type)) %>%
+  dplyr::select(name, gene)
+
+# Here are genes selected as HVG that are marker
+# genes, we will keep only genes if they appear
+# in the right cell
+blacklist_genes <- pagoda_hvgs %>%
+  left_join(mrkr_genes, by = "gene") %>%
+  na.omit() %>%
+  unnest() %>%
+  dplyr::filter(name == data) %>%
+  dplyr::select(name, gene)
+
+pagoda_hvgs <- bind_rows(ok_genes, 
+                         blacklist_genes) %>%
+  group_by(name) %>%
+    nest() %>%
+    dplyr::mutate(data = map(data, ~.x[[1]])) %>%
+    deframe()
+
+# Do all processing of counts matrices
+pb_dat <- create_init_exp(counts = counts,
+                          coldata = coldata) %>%
+  filt_profiles(pb_dat = .,
+                ncells = 25,
+                cts = cts) %>%
+  filt_gex_byexpr(pb_dat_list = .,
+                  min.count = 100,
+                  min.prop = 0.25) %>%
+  tmm_trns(pb_dat_list = .) %>%
+  filt_gex_byhvg(pb_dat_list = .,
+                 prior_hvg = pagoda_hvgs,
+                 var.threshold = NULL) %>%
+  pb_dat2MOFA(pb_dat_list = .)
+
+saveRDS(pb_dat, "./data_MI/mi_pb_red.rds")
+```
+
+# Preparing and fitting the MOFA model 
+
+We will try to identify 6 factors that explain the variability between patients captured by 7 different cell-types.
+
+Every factor captures coordination of gene expression across cell types and will be called multicellular gene factors for the rest of the vignette.
+
+It is important to clarify what these factors capture:
+
+a) Coordinated expression of identical genes (generalistic response) across cell-types
+b) Coordinated expression of different genes (cell-type specific response) across cell-types
+
+At the same time this coordination could be associated to cell type location in the tissue, nevertheless this shouldn't be precisely true in global tissue responses.
+
+```{r, message=FALSE}
+MOFAobject <- create_mofa(pb_dat)
+
+data_opts <- get_default_data_options(MOFAobject)
+
+model_opts <- get_default_model_options(MOFAobject)
+
+model_opts$spikeslab_weights <- FALSE
+
+```
+
+To get an optimal number of Factors, I will maximize the mean total explained variance.
+
+So we will loop from 3 to 6 factors and observe the value
+
+```{r, message=FALSE, eval = TRUE}
+total_meanR2 <- map_chr(set_names(3:6), function(n) {
+  
+  print(n)
+  
+  model_opts$num_factors <- n
+  
+  train_opts <- get_default_training_options(MOFAobject)
+
+  # Prepare MOFA model:
+  MOFAobject <- prepare_mofa(
+  object = MOFAobject,
+  data_options = data_opts,
+  model_options = model_opts,
+  training_options = train_opts)
+  
+  outfile <- file.path("./results/MI/MOFA_mcell", 
+                       paste0("MI_model", 
+                       as.character(n),
+                       "factors",
+                       ".hdf5"))
+  
+  model <- run_mofa(MOFAobject, outfile)
+  
+  return(model@cache$variance_explained$r2_total$single_group %>% mean())
+
+})
+
+```
+
+
+```{r, message=F, eval = TRUE}
+model_opt_plt <- total_meanR2 %>%
+  enframe() %>%
+  dplyr::mutate(value = as.numeric(value)) %>%
+  ggplot(aes(x = name, y = value)) +
+  geom_bar(stat = "identity") +
+  theme_classic2() +
+  theme(axis.text = element_text(size = 12)) +
+  ylab("Mean total expl. var.") +
+  xlab("Number of factors")
+
+pdf("./results/MI/MOFA_mcell/model_optm.pdf", height = 2.5, width = 2.5)
+plot(model_opt_plt)
+dev.off()
+
+plot(model_opt_plt)
+```
+
+# We decided to keep 6 factors for downstream analysis
+
+```{r}
+MOFA2::plot_data_overview(MOFAobject)
+```
+
+```{r}
+model_outfile <- "./results/MI/MOFA_mcell/MI_model6factors.hdf5"
+model <- MOFA2::load_model(model_outfile)
+```
+
+# Downstream analysis
+
+## Association of factors to covariates
+
+We will associate clinical covariates to factor scores. For each factor score, we will perform an analysis of variance to clinical covariates of interest. 
+
+In this specific case we will identify which factors associate with the histological description
+
+```{r}
+get_associated_factors <- function(meta, model, predicted_label) {
+  
+  factors <- get_allfscores(model = model, meta = meta)
+  
+  # Get factors associated with patient group
+  factors <- factors %>%
+  dplyr::select_at(c("sample", predicted_label, "Factor", "value")) %>%
+  group_by(Factor) %>%
+  nest() %>%
+  mutate(pvalue = map(data, function(dat) {
+    
+    gene_aov <- aov(as.formula(paste0("value ~ ", predicted_label)), data = dat) %>%
+      broom::tidy() %>%
+      dplyr::filter(term == predicted_label) %>%
+      dplyr::select(term, p.value)
+    
+    return(gene_aov)
+  })) %>%
+  tidyr::unnest(pvalue) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(adj_pvalue = p.adjust(p.value))
+
+  expl_var <- factors %>%
+  dplyr::select(Factor, term, p.value, adj_pvalue)
+
+  return(expl_var)
+  
+}
+```
+
+### Generating a simplified annotation of samples
+
+```{r}
+meta <- sample_dict_red %>%
+  dplyr::rename("sample" = "patient_region_id") %>%
+  dplyr::mutate(patient_group = gsub("-enriched", "", patient_group)) %>%
+  dplyr::mutate(patient_group = factor(patient_group,
+                                       levels = c("myogenic", "fibrotic", "ischemic")))
+```
+
+### Aesthetics definitions of comparisons
+
+```{r}
+my_cond_comparisons <- list(c("myogenic", "ischemic"), c("ischemic", "fibrotic"), c("myogenic", "ischemic"))
+my_batch_comparisons <- list(c("A","B"))
+```
+
+## Association to condition
+
+ANOVA reported in the text
+
+```{r}
+expl_var_pgroup <- get_associated_factors(meta = meta,model = model,predicted_label = "patient_group")
+
+expl_var_pgroup
+
+expl_var_pgroup %>%
+  dplyr::filter(adj_pvalue <= 0.05)
+```
+
+T-test reported in the legends for factor 1
+
+```{r}
+pair_comp <- get_allfscores(model = model, meta = meta) %>%
+  dplyr::filter(Factor %in% c("Factor1")) %>%
+  compare_means(value ~ patient_group,  
+                      data = .,
+                      method = "t.test", 
+                      alternative = "two.sided")
+
+pair_comp
+```
+
+```{r, fig.height=4, fig.width=2.5}
+max_val <- get_allfscores(model = model, meta = meta) %>%
+  dplyr::filter(Factor %in% c("Factor1")) %>%
+  pull(value) %>%
+  max() + 0.5
+
+associated_disease <- get_allfscores(model = model, meta = meta) %>%
+  dplyr::filter(Factor %in% c("Factor1")) %>%
+  pivot_wider(names_from = Factor, values_from = value) %>%
+  ggplot(., aes(x = patient_group,
+                y = Factor1,
+                color = patient_group)) +
+  geom_boxplot() +
+  geom_point(size = 2) +
+  ggpubr::stat_pvalue_manual(pair_comp, 
+                             label = "p.adj", 
+                             y.position = max_val, 
+                             step.increase = 0.1,
+                             tip.length = 0.01,size = 3.3) +
+  theme_classic() +
+  xlab("") +
+  scale_color_manual(values = set_names(c("darkred", "darkgreen", "darkblue"), 
+                                        c("myogenic","ischemic", "fibrotic"))) +
+  theme(axis.text.x = element_text(size =12, angle = 90, hjust = 1, vjust = 0.5),
+        axis.text.y = element_text(size =12),
+        legend.position = "none")
+
+plot(associated_disease)
+
+pdf("./results/MI/MOFA_mcell/associated_disease.pdf", height = 2.5, width = 1.5)
+
+plot(associated_disease)
+
+dev.off()
+```
+
+```{r, fig.height=4, fig.width=2.5}
+get_allfscores(model = model, meta = meta) %>%
+  dplyr::filter(Factor %in% c("Factor3")) %>%
+  pivot_wider(names_from = Factor, values_from = value) %>%
+  ggplot(., aes(x = patient_group,
+                y = Factor3,
+                color = patient_group)) +
+  geom_boxplot() +
+  geom_point(size = 2) +
+  theme_classic() +
+  xlab("") +
+  scale_color_manual(values = set_names(c("darkred", "darkgreen", "darkblue"), 
+                                        c("myogenic","ischemic", "fibrotic"))) +
+  theme(axis.text.x = element_text(size =12, angle = 90, hjust = 1, vjust = 0.5),
+        axis.text.y = element_text(size =12),
+        legend.position = "none")
+```
+
+## Association to batch
+
+```{r}
+expl_var_batch <- get_associated_factors(meta = meta,model = model,predicted_label = "batch")
+expl_var_batch
+```
+
+```{r}
+my_batch_comparisons <- list(c("A","B"))
+
+associated_batch <- get_allfscores(model = model, meta = meta) %>%
+  dplyr::filter(Factor %in% c("Factor2")) %>%
+  pivot_wider(names_from = Factor, values_from = value) %>%
+  ggplot(., aes(x = batch,
+                y = Factor2,
+                color = batch)) +
+  geom_boxplot() +
+  geom_point(size = 2) +
+  stat_compare_means(comparisons = my_batch_comparisons,
+                     size = 2.5) +
+  theme_classic() +
+  theme(axis.text.x = element_text(size =12),
+        axis.text.y = element_text(size =12),
+        legend.position = "none") + 
+  xlab("") +
+  scale_color_manual(values = set_names(c("black", "darkgrey"), c("A","B"))) 
+  
+
+plot(associated_batch)
+
+pdf("./results/MI/MOFA_mcell/associated_batch.pdf", height = 2, width = 1.3)
+
+plot(associated_batch)
+
+dev.off()
+```
+
+From this analysis we identify Factor 1 to be associated with the histological descriptions.
+
+## Explained variance per factor and summary heatmap
+
+We recover the explained variance per view per factor to evaluate if coordinated gene expression processes are coordinated between all the cell types or exclusive to only a group of them
+
+```{r, fig.height=10, fig.width=6}
+# Make the heatmap similar to scITD
+
+ht_opt$ROW_ANNO_PADDING <- unit(2.5, "mm")
+ht_opt$COLUMN_ANNO_PADDING <- unit(2.5, "mm")
+
+# Association colors
+col_fun_assoc <-  circlize::colorRamp2(seq(0, 20, length = 20), hcl.colors(20,"Purples",rev = T))
+col_fun_r2 <- circlize::colorRamp2(seq(0, 100, length = 50), hcl.colors(50,"Oranges",rev = T))
+col_fun_fact <- circlize::colorRamp2(seq(-5, 5, length = 50), hcl.colors(50,"Green-Brown",rev = T))
+
+#col_fun_r2 <- colorRamp2(c(0, 0.5, 1), c("white", "green"))
+
+row_anns <- get_factors(model, factors = "all")[[1]] %>% 
+  rownames() %>% 
+  enframe(value = "sample") %>% 
+  dplyr::select(sample) %>% 
+  left_join(meta, by = "sample") %>%
+  dplyr::select(patient_group, batch)
+  
+row_ha <- rowAnnotation(condition = row_anns$patient_group,
+                       batch = row_anns$batch,
+                       col = list(condition = c("fibrotic" = "darkblue",
+                                                    "myogenic" = "darkred", 
+                                                    "ischemic" = "darkgreen"),
+                                  batch = c("A" = "black",
+                                            "B" = "darkgrey")),
+                       gap = unit(2.5, "mm"),
+                       border = TRUE)
+
+assoc_pvals <- bind_rows("condition" = -log10(expl_var_pgroup$adj_pvalue),
+                         "batch" = -log10(expl_var_batch$adj_pvalue)) %>%
+  as.matrix()
+
+# Add explain variance per cell-type
+r2_per_factor <- model@cache$variance_explained$r2_per_factor[[1]]
+
+column_ha = HeatmapAnnotation("r2" = r2_per_factor,
+                              "assocs" = assoc_pvals,
+                              gap = unit(2.5, "mm"),
+                              border = TRUE,
+                              col = list(r2 = col_fun_r2,
+                                  assocs = col_fun_assoc))
+
+
+scores_hmap <- Heatmap(get_factors(model, factors = "all")[[1]],
+        name = "factor_scores", 
+        right_annotation = row_ha,
+        top_annotation = column_ha,
+        cluster_columns = FALSE, 
+        show_row_dend = TRUE,
+        show_row_names = FALSE,
+        border = TRUE,
+        gap = unit(2.5, "mm"),
+        col = col_fun_fact)
+
+pdf("./results/MI/MOFA_mcell/MOFAcell_summ.pdf", height = 5, width = 3.7)
+
+draw(scores_hmap)
+
+dev.off()
+
+draw(scores_hmap)
+
+```
+
+## Dimensionality reduction
+
+Finally, to visualize in a 2D scatter plot we use UMAP with all factors
+
+```{r,fig.height=2.5, fig.width=4.5}
+# Factor scores per sample:
+factors <- get_factors(model, factors = "all")[[1]] 
+
+# UMAP of factor
+factors_umap <- uwot::umap(factors, n_neighbors = 7)
+colnames(factors_umap) <- c("UMAP_1", "UMAP_2")
+
+factors_umap <- factors_umap %>%
+  as.data.frame() %>%
+  rownames_to_column("sample") %>%
+  left_join(meta)
+
+umap_plt <- ggplot(factors_umap, aes(x = UMAP_1, 
+                                     y = UMAP_2, 
+                                     color = patient_group,
+                                     shape = batch)) +
+  geom_point(size = 2.5) +
+  theme_classic() +
+  theme(axis.text = element_text(size =12)) +
+  scale_color_manual(values = c("darkred", "darkblue", "darkgreen"))
+
+plot(umap_plt)
+
+pdf("./results/MI/MOFA_mcell/Factor_UMAP.pdf", width = 3.8, height = 2.7)
+plot(umap_plt)
+dev.off()
+```
+
+
+```{r, fig.height=2.5, fig.width=4.5}
+factors <- get_factors(model, factors = "all")[[1]] 
+
+factors_mds <- cmdscale(dist(factors)) %>%
+  as.data.frame()
+
+colnames(factors_mds) <- c("MDS1", "MDS2")
+
+factors_mds <- factors_mds %>%
+  as.data.frame() %>%
+  rownames_to_column("sample") %>%
+  left_join(meta)
+
+mds_plt <- ggplot(factors_mds, aes(x = MDS1, 
+                                     y = MDS2, 
+                                     color = patient_group,
+                                     shape = batch)) +
+  geom_point(size = 2.5) +
+  theme_classic() +
+  theme(axis.text = element_text(size =12)) +
+  scale_color_manual(values = c("darkred", "darkblue", "darkgreen"))
+
+plot(mds_plt)
+
+pdf("./results/MI/MOFA_mcell/Factor_MDS.pdf", width = 3.8, height = 2.7)
+plot(mds_plt)
+dev.off()
+```
+
+
+## Paper stats
+
+### Recovered mean across all samples
+```{r}
+model@cache$variance_explained$r2_total$single_group %>% mean()
+```
+
+### Factors associated with patient group
+```{r}
+useful_factors <- expl_var_pgroup %>%
+  dplyr::filter(adj_pvalue < 0.05) %>%
+  pull(Factor)
+
+print(useful_factors)
+
+model@cache$variance_explained$r2_per_factor$single_group[useful_factors,,drop = F] %>%
+  colSums()
+
+model@cache$variance_explained$r2_per_factor$single_group[useful_factors,,drop = F] %>%
+  colSums() %>%
+  mean()
+```
+
+### Factors associated with batch
+```{r}
+useful_factors <- expl_var_batch %>%
+  dplyr::filter(adj_pvalue < 0.05) %>%
+  pull(Factor)
+
+print(useful_factors)
+
+model@cache$variance_explained$r2_per_factor$single_group[useful_factors,,drop = F] %>%
+  colSums()
+
+model@cache$variance_explained$r2_per_factor$single_group[useful_factors,,drop = F] %>%
+  colSums() %>%
+  mean()
+```
