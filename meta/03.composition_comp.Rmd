@@ -1,0 +1,100 @@
+---
+title: "ReHeaT deconvolution"
+author: "Ricardo Ramirez"
+date: "2023-01-10"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(compositions)
+```
+
+## Bisque estimated cell proportions using the HCA
+
+```{r}
+reheat_comps <- readRDS("./data_reheat/hca_vis_deconresults_bulknormed.rds")
+# Fixing bad naming
+study_names <- names(reheat_comps)
+study_names[study_names == "Spurell19"] <- "Spurrell19"
+names(reheat_comps) <- study_names
+reheat_comps <- map(reheat_comps, ~.x[["CPM"]] %>% t())
+reheat_comps <- map(reheat_comps, ~ compositions::clr(.x))
+```
+
+```{r}
+reheat <- readRDS("./data_reheat/METAheart.rds")
+reheat <- reheat[names(reheat_comps)]
+
+studies <- names(reheat)
+
+for(study in studies) {
+  print(study)
+  reheat[[study]][["clr_comps"]] <- reheat_comps[[study]] %>%
+    as.data.frame() %>%
+    rownames_to_column("Sample") %>%
+    tidyr::pivot_longer(-Sample, names_to = "ct", values_to = "comps") %>%
+    left_join(reheat[[study]]$TARGETS %>%
+                dplyr::select(Sample, HeartFailure), 
+              by = "Sample")
+}
+
+```
+
+
+```{r}
+reheat_comps <- map(reheat, ~.x[["clr_comps"]]) %>%
+  enframe() %>%
+  unnest() %>%
+  na.omit()
+
+ct_ds <- reheat_comps %>%
+  group_by(name, ct) %>%
+  dplyr::mutate(HeartFailure = factor(HeartFailure, 
+                                      levels = c("yes", "no"))) %>%
+  nest() %>%
+  mutate(ds_t = map(data, function(dat) {
+    
+    t.test(comps ~ HeartFailure, data = dat) %>%
+      broom::tidy()
+    
+  }))
+
+ct_ds_stat <- ct_ds %>%
+  dplyr::select(name, ds_t) %>%
+  unnest() %>%
+  arrange(-statistic) %>%
+  group_by(name) %>%
+  dplyr::mutate(p_adj = p.adjust(p.value)) %>%
+  dplyr::select(ct, name, statistic, p.value, p_adj) %>%
+  dplyr::mutate(significance = ifelse(p_adj <= 0.1, "*", ""))
+```
+
+```{r}
+reheat_stats_plt <- ggplot(ct_ds_stat, aes(y = name, 
+                       x  = ct, 
+                       fill = statistic,
+                       label = significance)) +
+  geom_tile() +
+  geom_text() +
+  scale_fill_gradient2() +
+  theme(axis.text = element_text(size =12),
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  ylab("") +
+  xlab("") +
+  coord_equal()
+
+```
+
+
+
+
+
+
+
+
+
+
+

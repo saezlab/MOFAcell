@@ -6,7 +6,7 @@
 
 library(Seurat)
 library(tidyverse)
-source("./MOFAcell/code/paintR.R")
+source("./MOFAcell/paintR.R")
 
 # Get individual slide info ---------------------------------------------
 visium_folder <- "/Users/ricardoramirez/Dropbox/PhD/Research/mi_atlas/processed_visium/objects/"
@@ -43,22 +43,54 @@ param_df <- list.files(module_folder) %>%
   left_join(visium_df, by = "slide") %>%
   dplyr::mutate(file = paste0(module_folder,file))
 
+# Here we will define a unified scoring across slides -------------------
+
+extract_max_vals <- function(file_path) {
+  
+  scores <- read_csv(file_path, show_col_types = F) %>%
+    pivot_longer(-spot_id) %>%
+    dplyr::select(-spot_id) %>%
+    dplyr::mutate(name = strsplit(name, "_") %>%
+                  map_chr(., ~.x[[1]])) %>%
+    group_by(name) %>%
+    dplyr::summarise(max_val = max(value))
+  
+  return(scores)
+  
+}
+
+norm_fact_df <- param_df %>%
+  dplyr::mutate(max_scores = map(file, extract_max_vals)) %>%
+  dplyr::select(slide, max_scores) %>%
+  unnest() %>%
+  group_by(name) %>%
+  summarize(norm_fact = max(max_val))
+  
+norm_fact <- set_names(norm_fact_df$norm_fact,
+                       norm_fact_df$name)
+
 # We will plot in slides
 # the scores
 extract_visium_scores <- function(file, slide, visium_file) {
   
   print(slide)
   
-  scores <- read_csv(file) %>%
+  scores <- read_csv(file, show_col_types = F) %>%
     dplyr::mutate(spot_id = gsub(slide, "", spot_id) %>%
                     strsplit(., "_") %>%
                     map_chr(., ~.x[[2]])) %>%
     column_to_rownames("spot_id") %>%
     as.matrix()
   
-  # Here we make the scores RGB friendly
+  ix <- colnames(scores) %>%
+    strsplit(., "_") %>%
+    map_chr(., ~.x[[1]])
   
-  scores <- sweep(scores, MARGIN = 2, STATS = apply(scores, 2, max), FUN = "/")
+  
+  # Here we make the scores RGB friendly
+  # scores <- sweep(scores, MARGIN = 2, STATS = apply(scores, 2, max), FUN = "/")
+  
+  scores <- sweep(scores, MARGIN = 2, STATS = norm_fact[ix], FUN = "/")
   
   scores[is.nan(scores)] <- 0
   
@@ -74,6 +106,7 @@ extract_visium_scores <- function(file, slide, visium_file) {
 
 score_list <- pmap(param_df, extract_visium_scores)
 names(score_list) <- param_df$slide
+
 
 # Trying paintR
 
@@ -99,7 +132,9 @@ paintCTs <- function(score_list_obj, ct, col_select = c("red", "blue")) {
           axis.text=element_blank(),
           axis.ticks=element_blank(),
           panel.grid.major = element_blank(),
-          panel.grid.minor = element_blank()) +
+          panel.grid.minor = element_blank(),
+          panel.background = element_rect(fill = "black",
+                                          colour = "black")) +
     xlab("") + ylab("")
   
   #Legend

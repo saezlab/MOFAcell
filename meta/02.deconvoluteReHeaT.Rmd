@@ -14,7 +14,7 @@ Here we demonstrate that MOFA cell loadings can be used to deconvolute disease s
 ```{r}
 library(tidyverse)
 library(MOFA2)
-source("./MOFAcell/code/factorutils.R")
+source("./MOFAcell/factorutils.R")
 ```
 
 
@@ -87,8 +87,8 @@ ct_ds_stat <- ct_ds %>%
   arrange(-statistic) %>%
   group_by(name) %>%
   dplyr::mutate(p_adj = p.adjust(p.value)) %>%
-  dplyr::select(source, name, statistic, p.value, p_adj) %>%
-  dplyr::mutate(significance = ifelse(p_adj <= 0.2, "*", ""))
+  dplyr::select(source, name, statistic, estimate, p.value, p_adj) %>%
+  dplyr::mutate(significance = ifelse(p_adj <= 0.1, "*", ""))
 ```
 
 # Show the example of one study
@@ -118,9 +118,10 @@ dev.off()
 
 
 ```{r, fig.height=3.7, fig.width= 3.5}
+# Here we are using the difference between the means of standardized scores
 reheat_stats_plt <- ggplot(ct_ds_stat, aes(y = name, 
                        x  = source, 
-                       fill = statistic,
+                       fill = estimate,
                        label = significance)) +
   geom_tile() +
   geom_text() +

@@ -13,7 +13,7 @@ We will associate each factor with conditions of interest and modularize the gen
 into coordinated responses
 
 ```{r}
-source("./MOFAcell/code/factorutils.R")
+source("./MOFAcell/factorutils.R")
 ```
 
 # Define the model to analyse

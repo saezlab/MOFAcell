@@ -8,7 +8,7 @@
 library(Seurat)
 library(tidyverse)
 library(mistyR)
-source("./MOFAcell/code/misty_utilities.R")
+source("./MOFAcell/misty_utilities.R")
 
 # Get individual slide info ---------------------------------------------
 visium_folder <- "/Users/ricardoramirez/Dropbox/PhD/Research/mi_atlas/processed_visium/objects/"
@@ -40,7 +40,7 @@ misty_folder <- "./results/MI/MOFA_mcell/factor_desc/Factor1_char/misty/"
 param_df <- list.files(module_folder) %>%
   enframe(value = "file") %>%
   dplyr::select(-name) %>%
-  dplyr::filter(grepl("msk", file)) %>%
+  dplyr::filter(grepl("msk.csv", file)) %>%
   dplyr::mutate(slide = gsub("_msk.csv", "", file)) %>%
   left_join(visium_df, by = "slide") %>%
   dplyr::mutate(file = paste0(module_folder,file),
@@ -48,6 +48,32 @@ param_df <- list.files(module_folder) %>%
   left_join(meta, by = c("slide" = "sample_id")) %>%
   dplyr::filter(patient_group != "group_1")
 
+# Get normalization scores
+
+extract_max_vals <- function(file_path) {
+  
+  scores <- read_csv(file_path, show_col_types = F) %>%
+    pivot_longer(-spot_id) %>%
+    dplyr::select(-spot_id) %>%
+    dplyr::mutate(name = strsplit(name, "_") %>%
+                    map_chr(., ~.x[[1]])) %>%
+    group_by(name) %>%
+    dplyr::summarise(max_val = max(value))
+  
+  return(scores)
+  
+}
+
+norm_fact_df <- param_df %>%
+  dplyr::mutate(max_scores = map(file, extract_max_vals)) %>%
+  dplyr::select(slide, max_scores) %>%
+  unnest() %>%
+  group_by(name) %>%
+  summarize(norm_fact = max(max_val))
+
+norm_fact <- set_names(norm_fact_df$norm_fact,
+                       norm_fact_df$name)
+ 
 # Fit a MISTy model with a masked cell loading matrix --------------------
 
 multicell_framework <- function(file, slide, visium_file, misty_file) {
@@ -61,9 +87,17 @@ multicell_framework <- function(file, slide, visium_file, misty_file) {
     column_to_rownames("spot_id") %>%
     as.matrix()
   
+  ix <- colnames(scores) %>%
+    strsplit(., "_") %>%
+    map_chr(., ~.x[[1]])
+  
   # Here we make the scores RGB friendly
   
-  scores <- sweep(scores, MARGIN = 2, STATS = apply(scores, 2, max), FUN = "/")
+  norm_fact_max = norm_fact
+  norm_fact_max[names(norm_fact_max)] = max(norm_fact_max)
+  
+  #Recipe 2
+  scores <- sweep(scores, MARGIN = 2, STATS = norm_fact_max[ix], FUN = "/")
   
   scores[is.nan(scores)] <- 0
   
@@ -118,13 +152,17 @@ multicell_framework <- function(file, slide, visium_file, misty_file) {
 # Run MISTy models
 
 fast_param_df = param_df %>%
-  dplyr::select(file, slide, visium_file, misty_file)
+  dplyr::select(file, slide, visium_file, misty_file) %>%
+  dplyr::filter(slide != "Visium_13_CK291")
 
 pmap(fast_param_df, multicell_framework)
 
 # Generate plots of the interactions
 
-all_misty <- mistyR::collect_results(fast_param_df$misty_file)
+all_misty <- mistyR::collect_results(param_df %>% 
+                                       dplyr::filter(patient_group == "group_3",
+                                                     slide != "Visium_13_CK291") %>% 
+                                       pull(misty_file))
 
 all_misty$improvements.stats
 
@@ -146,7 +184,7 @@ plot(R2_plt)
 
 dev.off()
 
-mistyR::plot_interaction_heatmap(all_misty, "intra",cutoff = 0.5)
+mistyR::plot_interaction_heatmap(all_misty, "intra",cutoff = 0)
 
 intra_plt <- last_plot() +
   theme(axis.text.x = element_text(size = 12, angle = 90, 
@@ -160,7 +198,7 @@ plot(intra_plt)
 
 dev.off()
 
-mistyR::plot_interaction_heatmap(all_misty, "para_ct_5",cutoff = 0.5)
+mistyR::plot_interaction_heatmap(all_misty, "para_ct_5",cutoff = 0)
 
 para_plt <- last_plot() +
   theme(axis.text.x = element_text(size = 12, angle = 90, 

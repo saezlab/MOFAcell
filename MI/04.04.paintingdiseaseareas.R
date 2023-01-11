@@ -6,7 +6,7 @@
 
 library(Seurat)
 library(tidyverse)
-source("./MOFAcell/code/paintR.R")
+source("./MOFAcell/paintR.R")
 
 # Get individual slide info ---------------------------------------------
 visium_folder <- "/Users/ricardoramirez/Dropbox/PhD/Research/mi_atlas/processed_visium/objects/"
@@ -31,25 +31,52 @@ annotation_names <- tibble(patient_group = c("group_1",
 meta <- read_csv("./data_MI/visium_patient_anns_revisions.csv") %>%
   left_join(annotation_names)
 
-
 # Get module info -------------------------------------------------------
 module_folder <- "./results/MI/MOFA_mcell/factor_desc/Factor1_char/decoupler_ct/"
 
 param_df <- list.files(module_folder) %>%
   enframe(value = "file") %>%
   dplyr::select(-name) %>%
-  dplyr::filter(grepl("msk", file)) %>%
+  dplyr::filter(grepl("msk.csv", file)) %>%
   dplyr::mutate(slide = gsub("_msk.csv", "", file)) %>%
   left_join(visium_df, by = "slide") %>%
   dplyr::mutate(file = paste0(module_folder,file))
 
-# We will plot in slides
-# the scores
+# Here we will define a unified scoring across slides -------------------
+
+extract_max_vals <- function(file_path) {
+  
+  scores <- read_csv(file_path, show_col_types = F) %>%
+    pivot_longer(-spot_id) %>%
+    dplyr::select(-spot_id) %>%
+    dplyr::mutate(name = strsplit(name, "_") %>%
+                    map_chr(., ~.x[[1]])) %>%
+    group_by(name) %>%
+    dplyr::summarise(max_val = max(value))
+  
+  return(scores)
+  
+}
+
+norm_fact_df <- param_df %>%
+  dplyr::mutate(max_scores = map(file, extract_max_vals)) %>%
+  dplyr::select(slide, max_scores) %>%
+  unnest() %>%
+  group_by(name) %>%
+  summarize(norm_fact = max(max_val))
+
+norm_fact <- set_names(norm_fact_df$norm_fact,
+                       norm_fact_df$name)
+
+
+# We will plot in slides the scores -------------------------
+# Normalizing by the maximum per cell-type ------------------
+
 extract_visium_scores <- function(file, slide, visium_file) {
   
   print(slide)
   
-  scores <- read_csv(file) %>%
+  scores <- read_csv(file, show_col_types = F) %>%
     dplyr::mutate(spot_id = gsub(slide, "", spot_id) %>%
                     strsplit(., "_") %>%
                     map_chr(., ~.x[[2]])) %>%
@@ -58,25 +85,15 @@ extract_visium_scores <- function(file, slide, visium_file) {
   
   # Here we make the scores RGB friendly
   
-  norm_fact_df <- apply(scores, 2, max) %>%
-    enframe() %>%
-    dplyr::mutate(ct = strsplit(name, "_") %>%
-                    map_chr(., ~.x[[1]])) %>%
-    group_by(ct) %>%
-    dplyr::mutate(norm_fact = max(value))
+  ix <- colnames(scores) %>%
+    strsplit(., "_") %>%
+    map_chr(., ~.x[[1]])
   
-  norm_fact_vect <- set_names(norm_fact_df$norm_fact, 
-                              norm_fact_df$name)
-  
-  # Recipe 1
-  #scores <- scores/max(scores)
-  # Recipe 2
-  #scores <- sweep(scores, MARGIN = 2, STATS = apply(scores, 2, max), FUN = "/")
-  
-  # Recipe 3
-  scores <- sweep(scores, MARGIN = 2, 
-                  STATS = norm_fact_vect, 
-                  FUN = "/")
+  norm_fact_max = norm_fact
+  norm_fact_max[names(norm_fact_max)] = max(norm_fact_max)
+
+  #Recipe 2
+  scores <- sweep(scores, MARGIN = 2, STATS = norm_fact_max[ix], FUN = "/")
   
   scores[is.nan(scores)] <- 0
   
@@ -162,7 +179,7 @@ fib_paint <- paintCTs(score_list_obj = score_list$Visium_13_CK291,
                       sign_type = "pos", 
                       col_select = c("red", "blue", "green"))
 
-pdf("./results/MI/paintR/fibrotic_paint.pdf", height = 4.5, width = 6.5)
+pdf("./results/MI/paintR/fibrotic_paintR3.pdf", height = 4.5, width = 6.5)
 
 plot(fib_paint)
 
@@ -174,7 +191,7 @@ ischemic_paint <- paintCTs(score_list_obj = score_list$Visium_18_CK296,
                            sign_type = "pos", 
                            col_select = c("red", "blue", "green"))
 
-pdf("./results/MI/paintR/ischemic_paint.pdf", height = 4.5, width = 6.5)
+pdf("./results/MI/paintR/ischemic_paintR3.pdf", height = 4.5, width = 6.5)
 
 plot(ischemic_paint)
 
@@ -182,14 +199,30 @@ dev.off()
 
 
 
-myogenic_paint <- paintCTs(score_list_obj = score_list$AKK006_157771, 
+myogenic_paint <- paintCTs(score_list_obj = score_list$Visium_1_CK279, 
                            cts = c("CM", "Fib", "Myeloid"),
                            sign_type = "pos", 
                            col_select = c("red", "blue", "green"))
 
-pdf("./results/MI/paintR/myogenic_paint.pdf", height = 4.5, width = 6.5)
+pdf("./results/MI/paintR/myogenic_paintR3.pdf", height = 4.5, width = 6.5)
 
 plot(myogenic_paint)
 
 dev.off()
+
+
+myogenic_paint <- paintCTs(score_list_obj = score_list$Visium_1_CK279, 
+                           cts = c("CM", "Fib", "Myeloid"),
+                           sign_type = "pos", 
+                           col_select = c("red", "blue", "green"))
+
+ischemic_paint <- paintCTs(score_list_obj = score_list$Visium_15_CK293, 
+                           cts = c("CM", "Fib", "Myeloid"),
+                           sign_type = "pos", 
+                           col_select = c("red", "blue", "green"))
+
+ischemic_paint <- paintCTs(score_list_obj = score_list$Visium_16_CK294, 
+                           cts = c("CM", "Fib", "Myeloid"),
+                           sign_type = "pos", 
+                           col_select = c("red", "blue", "green"))
 

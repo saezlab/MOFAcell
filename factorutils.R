@@ -546,6 +546,7 @@ summarize_factor_lite <- function(model,
     theme_minimal() +
     theme(axis.text.y = element_text(size = 12),
           axis.text.x = element_text(size = 8)) +
+    theme(plot.margin = unit(c(0,1,0.2,0.2), "cm")) +
     ylab("number of cell types") +
     xlab("number of genes")
   
@@ -652,7 +653,7 @@ summarize_factor_lite <- function(model,
   
   #Make a complex heatmap of loadings grouped by modules
   
-  col_fun_fact <- circlize::colorRamp2(seq(-1.5, 1.5, length = 30), hcl.colors(30,"Green-Brown",rev = T))
+  col_fun_fact <- circlize::colorRamp2(seq(-1.5, 1.5, length = 30), hcl.colors(30,"RdBu",rev = T))
   
   loads_hmap <- Heatmap(feature_matrix,
                         name = "loading",

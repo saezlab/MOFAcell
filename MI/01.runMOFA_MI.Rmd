@@ -17,8 +17,8 @@ library(MOFA2)
 library(HDF5Array)
 library(ComplexHeatmap)
 library(circlize)
-source("./MOFAcell/code/MOFAcellprep.R")
-source("./MOFAcell/code/factorutils.R")
+source("./MOFAcell/MOFAcellprep.R")
+source("./MOFAcell/factorutils.R")
 ```
 
 ```{r, echo=FALSE}
@@ -124,7 +124,7 @@ pagoda_hvgs <- pagoda_hvgs %>%
   enframe("name","gene") %>%
   unnest()
 
-# Filtering out black listed genes
+# Filtering out background noise listed genes
 # Marker genes from Kuppe et al
 mrkr_genes <- read_csv("./data_MI/edgeR_cellmrkrs.csv")
 mrkr_genes <- mrkr_genes %>% #dplyr::filter(!name %in% exclude_ct) %>%
@@ -372,7 +372,9 @@ associated_disease <- get_allfscores(model = model, meta = meta) %>%
                                         c("myogenic","ischemic", "fibrotic"))) +
   theme(axis.text.x = element_text(size =12, angle = 90, hjust = 1, vjust = 0.5),
         axis.text.y = element_text(size =12),
-        legend.position = "none")
+        legend.position = "none") +
+    theme(plot.margin = unit(c(1.0,0,0,0.5), "cm"))  #
+
 
 plot(associated_disease)
 

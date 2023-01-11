@@ -19,8 +19,8 @@ library(edgeR)
 library(circlize)
 library(compositions)
 library(biomaRt)
-source("./MOFAcell/code/MOFAcellprep.R")
-source("./MOFAcell/code/factorutils.R")
+source("./MOFAcell/MOFAcellprep.R")
+source("./MOFAcell/factorutils.R")
 ```
 
 ```{r, echo=FALSE}
@@ -48,7 +48,7 @@ disease_dict <- sample_dict_red$disease %>%
   enframe(value = "disease", 
           name = "dis_code")
 
-disease_dict$dis_code <- c("CTRL", "DCM", 
+disease_dict$dis_code <- c("NF", "DCM", 
                            "ARVC", "NCC")
 
 sample_dict_red <- sample_dict_red %>%
@@ -170,6 +170,21 @@ coldata <- colData(pb_dat) %>%
 colnames(counts) <- rownames(coldata)
 ```
 
+Defining background genes
+
+```{r}
+mrkr_genes <- read_csv("./results/DCM_hubner/edgeR_cellmrkrs.csv")
+
+mrkr_genes <- mrkr_genes %>% #dplyr::filter(!name %in% exclude_ct) %>%
+  dplyr::filter(FDR < 0.01, logFC > 1) %>%
+  dplyr::select(name, gene) %>%
+  dplyr::rename("lineage" = name) %>%
+  group_by(lineage) %>%
+  nest() %>%
+  dplyr::mutate(data = map(data, ~.x[[1]])) %>%
+  deframe()
+```
+
 ### First process counts data via MOFA cell prep
 
 ```{r}
@@ -194,8 +209,13 @@ pb_dat <- create_init_exp(counts = counts,
   filt_gex_byhvg(pb_dat_list = .,
                  prior_hvg = NULL,
                  var.threshold = 0) %>%
+  filt_gex_bybckgrnd(pb_dat_list = ., 
+                     prior_mrks = mrkr_genes) %>%
   pb_dat2MOFA(pb_dat_list = .)
 
+```
+
+```{r}
 saveRDS(pb_dat, "./data_DCMACM_Science/pb_red.rds")
 ```
 
@@ -307,7 +327,7 @@ get_allfscores(model = model, meta = meta) %>%
 # Genetic variants
 
 ```{r}
-expl_var_gen<- get_associated_factors(meta = meta %>%
+expl_var_gen <- get_associated_factors(meta = meta %>%
                                             dplyr::filter(!Primary.Genetic.Diagnosis %in% c("control")),
                                                           model = model,
                                       predicted_label = "Primary.Genetic.Diagnosis")
@@ -316,11 +336,11 @@ expl_var_gen
 
 ```{r, fig.height=3, fig.width=4.5}
 get_allfscores(model = model, meta = meta) %>%
-  dplyr::filter(Factor %in% c("Factor1", "Factor6"),
+  dplyr::filter(Factor %in% c("Factor3", "Factor5"),
                 !Primary.Genetic.Diagnosis %in% c("control")) %>%
   pivot_wider(names_from = Factor, values_from = value) %>%
   ggplot(., aes(x = Primary.Genetic.Diagnosis,
-                y = Factor1)) +
+                y = Factor3)) +
   geom_boxplot() +
   geom_point(size = 2) +
   theme_classic() +
@@ -358,17 +378,32 @@ From this analysis we identify Factor 1 to be associated with the disease descri
 We recover the explained variance per view per factor to evaluate if coordinated gene expression processes are coordinated between all the cell types or exclusive to only a group of them
 
 ```{r, fig.height=10, fig.width=5}
+ht_opt$ROW_ANNO_PADDING <- unit(2.5, "mm")
+ht_opt$COLUMN_ANNO_PADDING <- unit(2.5, "mm")
+
+# Association colors
+col_fun_assoc <-  circlize::colorRamp2(seq(0, 20, length = 20), hcl.colors(20,"Purples",rev = T))
+col_fun_r2 <- circlize::colorRamp2(seq(0, 100, length = 50), hcl.colors(50,"Oranges",rev = T))
+col_fun_fact <- circlize::colorRamp2(seq(-5, 5, length = 50), hcl.colors(50,"Green-Brown",rev = T))
+
 # Make the heatmap similar to scITD
 row_anns <- get_factors(model, factors = "all")[[1]] %>% 
   rownames() %>% 
   enframe() %>% 
   dplyr::select(value) %>% 
   left_join(sample_dict_red, by = c("value" = "donor_id")) %>%
-  dplyr::select(dis_code, Primary.Genetic.Diagnosis, sex)
+  dplyr::select(dis_code, sex)
 
-row_ha = rowAnnotation(patient_group = row_anns$dis_code,
-                       genetics = row_anns$Primary.Genetic.Diagnosis,
-                       sex = row_anns$sex)
+row_ha <- rowAnnotation(patient_group = row_anns$dis_code,
+                       sex = row_anns$sex,
+                       col = list(patient_group = c("ARVC" = "lightblue",
+                                                    "NF" = "darkred", 
+                                                    "DCM"= "darkgreen",
+                                                    "NCC" = "pink"),
+                                  sex = c("male" = "black",
+                                            "female" = "darkgrey")),
+                       gap = unit(2.5, "mm"),
+                       border = TRUE)
 
 
 assoc_pvals <- bind_rows("disease" = -log10(expl_var_pgroup$adj_pvalue),
@@ -379,17 +414,34 @@ assoc_pvals <- bind_rows("disease" = -log10(expl_var_pgroup$adj_pvalue),
 # Add explain variance per cell-type
 r2_per_factor <- model@cache$variance_explained$r2_per_factor[[1]]
 
-column_ha = HeatmapAnnotation("r2" = r2_per_factor,
-                              "assocs" = assoc_pvals)
+column_ha <- HeatmapAnnotation("r2" = r2_per_factor,
+                              "assocs" = assoc_pvals,
+                              gap = unit(2.5, "mm"),
+                              border = TRUE,
+                              col = list(r2 = col_fun_r2,
+                                  assocs = col_fun_assoc))
 
 
 scores_hmap <- Heatmap(get_factors(model, factors = "all")[[1]], 
         name = "factor_scores", 
         right_annotation = row_ha,
         top_annotation = column_ha,
-        cluster_columns = FALSE, show_row_dend = FALSE, show_row_names = FALSE)
+        cluster_columns = FALSE, 
+        show_row_dend = TRUE,
+        show_row_names = FALSE,
+        border = TRUE,
+        gap = unit(2.5, "mm"),
+        col = col_fun_fact)
 
 scores_hmap
+
+pdf("./results/DCM_hubner/MOFA_mcell/MOFAcell_summ.pdf", height = 5, width = 3.7)
+
+draw(scores_hmap)
+
+dev.off()
+
+draw(scores_hmap)
 ```
 
 ## Paper stats

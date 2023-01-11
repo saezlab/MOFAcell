@@ -121,6 +121,57 @@ filt_gex_byhvg <- function(pb_dat_list, prior_hvg = NULL, var.threshold = 1) {
   }
 }
 
+# Performs filtering of highly variable genes (after data transformation)
+# This is based on marker genes
+# The assumption is that background gene expression can be traced
+# by expression of cell type marker genes in cell types which shouldn't
+# express the gene.
+# In @prior_mrks one must provide a named list with marker genes defined by the user
+# We will keep only marker genes in the hvgs if they are expressed in the expected cell type
+filt_gex_bybckgrnd <- function(pb_dat_list, prior_mrks) {
+  
+  # Current genes per view
+  ct_genes <- map(pb_dat_list, rownames) %>%
+    enframe("view","gene") %>%
+    unnest()
+  
+  prior_mrks_df <- prior_mrks %>%
+    enframe("view_origin","gene") %>%
+    unnest() %>%
+    dplyr::mutate(marker_gene = TRUE)
+  
+  # Here are genes that aren't cell type markers
+  ok_genes <- ct_genes %>%
+    left_join(prior_mrks_df, by = "gene") %>%
+    dplyr::filter(is.na(marker_gene)) %>%
+    dplyr::select(view, gene)
+  
+  # Here are genes selected as HVG that are marker
+  # genes, we will keep only genes if they appear
+  # in the right cell
+  not_bckground_genes <- ct_genes %>%
+    left_join(prior_mrks_df, by = "gene") %>%
+    na.omit() %>%
+    unnest() %>%
+    dplyr::filter(view == view_origin) %>%
+    dplyr::select(view, gene)
+  
+  clean_hvgs <- bind_rows(ok_genes, 
+                          not_bckground_genes) %>%
+    group_by(view) %>%
+    nest() %>%
+    dplyr::mutate(data = map(data, ~.x[[1]])) %>%
+    deframe()
+  
+  pb_dat_list <- pb_dat_list %>%
+    filt_gex_byhvg(pb_dat_list = .,
+                   prior_hvg = clean_hvgs,
+                   var.threshold = NULL)
+  
+  return(pb_dat_list)
+}
+
+
 # Performs normalization via TMM
 tmm_trns <- function(pb_dat_list, scale_factor = 1000000) {
 
@@ -141,6 +192,7 @@ tmm_trns <- function(pb_dat_list, scale_factor = 1000000) {
   
 }
 
+# Makes a MOFA ready data set
 pb_dat2MOFA <- function(pb_dat_list) {
   
   pb_red <- map(pb_dat_list, function(x) {

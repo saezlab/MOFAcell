@@ -18,8 +18,8 @@ library(uwot)
 library(edgeR)
 library(circlize)
 library(compositions)
-source("./MOFAcell/code/MOFAcellprep.R")
-source("./MOFAcell/code/factorutils.R")
+source("./MOFAcell/MOFAcellprep.R")
+source("./MOFAcell/factorutils.R")
 ```
 
 # Import Broad Data
@@ -27,7 +27,7 @@ source("./MOFAcell/code/factorutils.R")
 ```{r}
 # Defining the patient annotations -----------------------------------------------------------------
 broad_meta <- read_csv("./data_HCMDCM_Nature/meta_data.csv")[,-1] %>%
-  dplyr::mutate("group" = "group_0")
+  dplyr::mutate("group" = "Chaffin2022")
 # Importing coldata of the matrices
 coldat_broad <- read_csv("./data_HCMDCM_Nature/pb_coldata.csv",
                    show_col_types = FALSE)[,-1] %>%
@@ -44,7 +44,7 @@ broad_meta %>% dplyr::group_by(disease) %>% summarise(n())
 ```{r}
 # Defining the patient annotations -----------------------------------------------------------------
 hub_meta <- read_csv("./data_DCMACM_Science/meta_data.csv")[,-1] %>%
-    dplyr::mutate("group" = "group_1")
+    dplyr::mutate("group" = "Reichart2022")
 
 hub_meta %>% dplyr::group_by(disease) %>% summarise(n())
 
@@ -65,6 +65,7 @@ coldat_hub <- read_csv("./data_DCMACM_Science/pb_coldata.csv",
                    show_col_types = FALSE)[,-1] %>%
   column_to_rownames("colname") %>%
   dplyr::rename(ncells = "counts")
+
 # Read normalized data w/ prior genes from broad
 hub_dat <- readRDS("./data_DCMACM_Science/pb_red_wprior.rds")
 ```
@@ -80,11 +81,10 @@ broad_dat <- broad_dat %>%
 
 ```{r}
 broad_dat <- broad_dat %>%
-  mutate(group = "group_0")
+  mutate(group = "Chaffin2022")
 
 hub_dat <- hub_dat %>%
-  mutate(group = "group_1")
-
+  mutate(group = "Reichart2022")
 ```
 
 ```{r}
@@ -219,7 +219,8 @@ score_plt <- get_allfscores(model = model, meta = all_meta) %>%
   geom_point(size = 2.5) +
   theme_classic() +
   theme(axis.text = element_text(size =12),
-        axis.title = element_text(size =12))
+        axis.title = element_text(size =12)) +
+  scale_color_manual(values = c("lightblue", "darkgreen", "darkblue", "pink", "darkred"))
 
 plot(score_plt)
 
@@ -250,6 +251,15 @@ expl_var_study
 We recover the explained variance per view per factor to evaluate if coordinated gene expression processes are coordinated between all the cell types or exclusive to only a group of them
 
 ```{r, fig.height=8, fig.width=3.5}
+
+ht_opt$ROW_ANNO_PADDING <- unit(2.5, "mm")
+ht_opt$COLUMN_ANNO_PADDING <- unit(2.5, "mm")
+
+# Association colors
+col_fun_assoc <-  circlize::colorRamp2(seq(0, 20, length = 20), hcl.colors(20,"Purples",rev = T))
+col_fun_r2 <- circlize::colorRamp2(seq(0, 100, length = 50), hcl.colors(50,"Oranges",rev = T))
+col_fun_fact <- circlize::colorRamp2(seq(-5, 5, length = 50), hcl.colors(50,"Green-Brown",rev = T))
+
 # Make the heatmap similar to scITD
 row_anns <- rbind(get_factors(model, 
                               factors = "all", 
@@ -261,11 +271,19 @@ row_anns <- rbind(get_factors(model,
   enframe() %>% 
   dplyr::select(value) %>% 
   left_join(all_meta, by = c("value" = "sample")) %>%
-  dplyr::select(disease, sex, group)
+  dplyr::select(disease, group)
 
-row_ha = rowAnnotation(patient_group = row_anns$disease,
-                       sex = row_anns$sex,
-                       study = row_anns$group)
+row_ha <- rowAnnotation(patient_group = row_anns$disease,
+                       study = row_anns$group,
+                       col = list(patient_group = c("ARVC" = "lightblue",
+                                                    "NF" = "darkred", 
+                                                    "HCM" = "darkblue",
+                                                    "DCM"= "darkgreen",
+                                                    "NCC" = "pink"),
+                                  study = c("Chaffin2022" = "black",
+                                            "Reichart2022" = "darkgrey")),
+                       gap = unit(2.5, "mm"),
+                       border = TRUE)
 
 
 assoc_pvals <- bind_rows("disease" = -log10(expl_var_pgroup$adj_pvalue),
@@ -275,17 +293,19 @@ assoc_pvals <- bind_rows("disease" = -log10(expl_var_pgroup$adj_pvalue),
 
 # Add explain variance per cell-type per group
 r2_per_factor_0 <- model@cache$variance_explained$r2_per_factor[[1]]
-colnames(r2_per_factor_0) <- paste0("g0_", colnames(r2_per_factor_0))
+colnames(r2_per_factor_0) <- paste0("Chaffin2022_", colnames(r2_per_factor_0))
 
 r2_per_factor_1 <- model@cache$variance_explained$r2_per_factor[[2]]
-colnames(r2_per_factor_1) <- paste0("g1_", colnames(r2_per_factor_1))
+colnames(r2_per_factor_1) <- paste0("Reichart2022_", colnames(r2_per_factor_1))
 
 r2_per_factor <- cbind(r2_per_factor_0, r2_per_factor_1)
 
 column_ha = HeatmapAnnotation("r2" = r2_per_factor,
                               "assocs" = assoc_pvals,
+                              gap = unit(2.5, "mm"),
                               border = TRUE,
-                              gp = gpar(col = "grey"))
+                              col = list(r2 = col_fun_r2,
+                                  assocs = col_fun_assoc))
 
 
 scores_hmap <- Heatmap(rbind(get_factors(model, 
@@ -297,9 +317,23 @@ scores_hmap <- Heatmap(rbind(get_factors(model,
         name = "factor_scores", 
         right_annotation = row_ha,
         top_annotation = column_ha,
-        cluster_columns = FALSE, show_row_dend = FALSE, show_row_names = FALSE)
+        cluster_columns = FALSE, 
+        show_row_dend = TRUE,
+        show_row_names = FALSE,
+        border = TRUE,
+        gap = unit(2.5, "mm"),
+        col = col_fun_fact)
 
 scores_hmap
+
+
+pdf("./results/META/MOFA_mcell/MOFAcell_summ.pdf", height = 5, width = 3.7)
+
+draw(scores_hmap)
+
+dev.off()
+
+draw(scores_hmap)
 ```
 
 ## Paper stats
@@ -308,13 +342,13 @@ scores_hmap
 
 #Group 0 = Broad
 ```{r}
-model@cache$variance_explained$r2_total$group_0
-model@cache$variance_explained$r2_total$group_0 %>% mean()
+model@cache$variance_explained$r2_total$Chaffin2022
+model@cache$variance_explained$r2_total$Chaffin2022 %>% mean()
 ```
 #Group 1 = Hubner
 ```{r}
-model@cache$variance_explained$r2_total$group_1
-model@cache$variance_explained$r2_total$group_1 %>% mean()
+model@cache$variance_explained$r2_total$Reichart2022
+model@cache$variance_explained$r2_total$Reichart2022 %>% mean()
 ```
 
 ### Factors associated with patient group
@@ -325,19 +359,19 @@ useful_factors <- expl_var_pgroup %>%
 
 print(useful_factors)
 
-model@cache$variance_explained$r2_per_factor$group_0[useful_factors,,drop = F] %>%
+model@cache$variance_explained$r2_per_factor$Chaffin2022[useful_factors,,drop = F] %>%
   colSums()
 
-model@cache$variance_explained$r2_per_factor$group_0[useful_factors,,drop = F] %>%
+model@cache$variance_explained$r2_per_factor$Chaffin2022[useful_factors,,drop = F] %>%
   colSums() %>%
   mean()
 ```
 
 ```{r}
-model@cache$variance_explained$r2_per_factor$group_1[useful_factors,,drop = F] %>%
+model@cache$variance_explained$r2_per_factor$Reichart2022[useful_factors,,drop = F] %>%
   colSums()
 
-model@cache$variance_explained$r2_per_factor$group_1[useful_factors,,drop = F] %>%
+model@cache$variance_explained$r2_per_factor$Reichart2022[useful_factors,,drop = F] %>%
   colSums() %>%
   mean()
 ```

@@ -1,25 +1,43 @@
 ---
-title: "Functional Enrichment"
+title: "Characterize meta-analysis"
 author: "Ricardo Ramirez"
-date: "11/2/2022"
+date: "2023-01-10"
 output: html_document
 editor_options: 
   chunk_output_type: console
 ---
 
-## Functional characterization of gene loadings
-
 ```{r setup, include=FALSE}
 library(tidyverse)
+library(MOFA2)
+source("./MOFAcell/factorutils.R")
 ```
 
+## What are the genes that we prioritize in the meta analysis?
+
 ```{r}
-loadings <- read_csv("./results/MI/MOFA_mcell/factor_desc/Factor1_char/loadings.csv") %>%
-  dplyr::select(-value) %>%
-  dplyr::group_by(celltype) %>%
+model_outfile <- "./results/META/MOFA_mcell/model.hdf5"
+model <- MOFA2::load_model(model_outfile)
+pb_data <- read_csv("./results/META/alldat.csv")
+meta <- read_csv("./results/META/allmeta.csv")
+```
+
+
+```{r}
+# Get loadings
+factor_loadings <- get_floadings(model = model,
+                                   factor = "Factor1") %>%
+    dplyr::filter(abs(value) >= 0.1) %>%
+  dplyr::mutate(sign_type = ifelse(value > 0, "NF", "HF")) %>%
+  dplyr::mutate(sign_type = paste0(ctype, "_", sign_type)) %>%
+  dplyr::select(sign_type, feature) %>%
+  group_by(sign_type) %>%
   nest() %>%
-  dplyr::mutate(data = map(data, ~.x[[1]])) %>%
+  mutate(data = map(data, ~.x[[1]])) %>%
   deframe()
+
+print("N genes in model")
+length(unlist(factor_loadings) %>% unique)
 ```
 
 ```{r}
@@ -29,7 +47,6 @@ gsets <- readRDS("./aux_data/Genesets_Dec19.rds")
 ## Hypergeometric test for functional enrichment
 
 ```{r}
-
 GSE_analysis <- function(geneList,Annotation_DB){
   
   geneList = geneList[geneList %in% unique(unlist(Annotation_DB))]
@@ -70,7 +87,7 @@ GSE_analysis <- function(geneList,Annotation_DB){
 # Main
 
 ```{r}
-cts_enrichment <- map(loadings, GSE_analysis, Annotation_DB = gsets$MSIGDB_GO_BIOLPROC)
+cts_enrichment <- map(factor_loadings, GSE_analysis, Annotation_DB = gsets$MSIGDB_REACTOME)
 ```
 
 ```{r}
@@ -80,20 +97,20 @@ neg_sets <- cts_enrichment %>%
   enframe() %>%
   unnest() %>%
   dplyr::filter(corr_p_value < 0.25,
-                grepl("neg",name)) %>%
+                grepl("HF",name)) %>%
   dplyr::group_by(name) %>%
-  slice(1:7) %>%
+  dplyr::slice(1:10) %>%
   pull(gset)
   
 neg_enrichment <- cts_enrichment %>% 
   enframe() %>%
   unnest() %>%
   dplyr::filter(gset %in% neg_sets,
-                grepl("neg",name)) %>%
+                grepl("HF",name)) %>%
   dplyr::mutate(corr_p_value = -log10(corr_p_value)) %>%
   dplyr::mutate(corr_p_value = ifelse(corr_p_value > 5, 5, corr_p_value)) %>%
-  dplyr::mutate(gset = gsub("GO_", "", gset) %>% strtrim(width = 35),
-                name = gsub("_neg", "", name))
+  dplyr::mutate(gset = gsub("REACTOME_", "", gset) %>% strtrim(width = 35),
+                name = gsub("_HF", "", name))
                 
 pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/functional_healthy.pdf", height = 3.4, width = 3.8)
 
@@ -102,12 +119,12 @@ neg_enrichment %>%
   pivot_wider(names_from = name, values_from = corr_p_value) %>%
   column_to_rownames("gset") %>%
   as.matrix() %>%
-  t() %>%
+  #t() %>%
   ComplexHeatmap::Heatmap(., name = "-log10(p)",
                           show_row_dend = F, 
                           show_column_dend = F, 
-                          row_names_gp = grid::gpar(fontsize = 10),
-                          column_names_gp = grid::gpar(fontsize = 6),
+                          row_names_gp = grid::gpar(fontsize = 6),
+                          column_names_gp = grid::gpar(fontsize = 10),
                           col = col_fun_fact)
 
 dev.off()
@@ -121,20 +138,20 @@ pos_sets <- cts_enrichment %>%
   enframe() %>%
   unnest() %>%
   dplyr::filter(corr_p_value < 0.25,
-                grepl("pos",name)) %>%
+                grepl("NF",name)) %>%
   dplyr::group_by(name) %>%
-  slice(1:5) %>%
+  dplyr::slice(1:5) %>%
   pull(gset)
   
 pos_enrichment <- cts_enrichment %>% 
   enframe() %>%
   unnest() %>%
   dplyr::filter(gset %in% pos_sets,
-                grepl("pos",name)) %>%
+                grepl("NF",name)) %>%
   dplyr::mutate(corr_p_value = -log10(corr_p_value)) %>%
   dplyr::mutate(corr_p_value = ifelse(corr_p_value > 5, 5, corr_p_value)) %>%
-  dplyr::mutate(gset = gsub("GO_", "", gset) %>% strtrim(width = 30),
-                name = gsub("_pos", "", name))
+  dplyr::mutate(gset = gsub("REACTOME_", "", gset) %>% strtrim(width = 35),
+                name = gsub("_NF", "", name))
 
 pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/functional_dis.pdf", height = 3, width = 3.8)
 
@@ -151,9 +168,3 @@ pos_enrichment %>%
 
 dev.off()
 ```
-
-
-
-
-
-
