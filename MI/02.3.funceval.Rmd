@@ -11,6 +11,7 @@ editor_options:
 
 ```{r setup, include=FALSE}
 library(tidyverse)
+library(ComplexHeatmap)
 ```
 
 ```{r}
@@ -70,7 +71,7 @@ GSE_analysis <- function(geneList,Annotation_DB){
 # Main
 
 ```{r}
-cts_enrichment <- map(loadings, GSE_analysis, Annotation_DB = gsets$MSIGDB_GO_BIOLPROC)
+cts_enrichment <- map(loadings, GSE_analysis, Annotation_DB = gsets$MSIGDB_HMARKS)
 ```
 
 ```{r}
@@ -79,10 +80,9 @@ col_fun_fact <- circlize::colorRamp2(seq(0, 5, length = 50), hcl.colors(50, "Blu
 neg_sets <- cts_enrichment %>% 
   enframe() %>%
   unnest() %>%
-  dplyr::filter(corr_p_value < 0.25,
+  dplyr::filter(corr_p_value < 0.1,
                 grepl("neg",name)) %>%
   dplyr::group_by(name) %>%
-  slice(1:7) %>%
   pull(gset)
   
 neg_enrichment <- cts_enrichment %>% 
@@ -92,23 +92,24 @@ neg_enrichment <- cts_enrichment %>%
                 grepl("neg",name)) %>%
   dplyr::mutate(corr_p_value = -log10(corr_p_value)) %>%
   dplyr::mutate(corr_p_value = ifelse(corr_p_value > 5, 5, corr_p_value)) %>%
-  dplyr::mutate(gset = gsub("GO_", "", gset) %>% strtrim(width = 35),
+  dplyr::mutate(gset = gsub("HALLMARK_", "", gset) %>% strtrim(width = 40),
                 name = gsub("_neg", "", name))
                 
 pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/functional_healthy.pdf", height = 3.4, width = 3.8)
 
-neg_enrichment %>%
+neg_plot <- neg_enrichment %>%
   dplyr::select(name, gset, corr_p_value) %>%
   pivot_wider(names_from = name, values_from = corr_p_value) %>%
   column_to_rownames("gset") %>%
   as.matrix() %>%
-  t() %>%
-  ComplexHeatmap::Heatmap(., name = "-log10(p)",
+  ComplexHeatmap::Heatmap(., name = "healthy \n-log(pval)",
                           show_row_dend = F, 
                           show_column_dend = F, 
-                          row_names_gp = grid::gpar(fontsize = 10),
-                          column_names_gp = grid::gpar(fontsize = 6),
+                          row_names_gp = grid::gpar(fontsize = 8),
+                          column_names_gp = grid::gpar(fontsize = 10),
                           col = col_fun_fact)
+
+plot(neg_plot)
 
 dev.off()
 
@@ -120,10 +121,10 @@ col_fun_fact <- circlize::colorRamp2(seq(0, 5, length = 50), hcl.colors(50,"Reds
 pos_sets <- cts_enrichment %>% 
   enframe() %>%
   unnest() %>%
-  dplyr::filter(corr_p_value < 0.25,
+  dplyr::filter(corr_p_value <= 0.1,
                 grepl("pos",name)) %>%
   dplyr::group_by(name) %>%
-  slice(1:5) %>%
+  dplyr::slice(1:6) %>%
   pull(gset)
   
 pos_enrichment <- cts_enrichment %>% 
@@ -133,25 +134,33 @@ pos_enrichment <- cts_enrichment %>%
                 grepl("pos",name)) %>%
   dplyr::mutate(corr_p_value = -log10(corr_p_value)) %>%
   dplyr::mutate(corr_p_value = ifelse(corr_p_value > 5, 5, corr_p_value)) %>%
-  dplyr::mutate(gset = gsub("GO_", "", gset) %>% strtrim(width = 30),
+  dplyr::mutate(gset = gsub("HALLMARK_", "", gset) %>% strtrim(width = 35),
                 name = gsub("_pos", "", name))
 
 pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/functional_dis.pdf", height = 3, width = 3.8)
 
-pos_enrichment %>%
+pos_plot <- pos_enrichment %>%
   dplyr::select(name, gset, corr_p_value) %>%
   pivot_wider(names_from = name, values_from = corr_p_value) %>%
   column_to_rownames("gset") %>%
-  ComplexHeatmap::Heatmap(., name = "-log10(p)",
+  ComplexHeatmap::Heatmap(., name = "disease \n-log(pval)",
                           show_row_dend = F, 
                           show_column_dend = F, 
-                          row_names_gp = grid::gpar(fontsize = 7),
+                          row_names_gp = grid::gpar(fontsize = 8),
                           column_names_gp = grid::gpar(fontsize = 10),
                           col = col_fun_fact)
+
+plot(pos_plot)
 
 dev.off()
 ```
 
+```{r}
+pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/functional_all.pdf", height = 4.8, width = 4.5)
+ht_list <- neg_plot %v% pos_plot
+draw(ht_list)
+dev.off()
+```
 
 
 

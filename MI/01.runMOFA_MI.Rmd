@@ -1,5 +1,5 @@
 ---
-title: "Estimation of multicellular factors from MOFA"
+title: "Estimation of multicellular factors using MOFA"
 author:
 - name: "Ricardo O. Ramirez Flores"
   affiliation: "Heidelberg University, Faculty of Medicine"
@@ -120,9 +120,6 @@ cts <- cts[! cts %in% exclude_ct]
 
 #Define HVGs coming from pagoda2 analysis
 pagoda_hvgs <- readRDS("./scITDdata/hvg_list.rds")
-pagoda_hvgs <- pagoda_hvgs %>%
-  enframe("name","gene") %>%
-  unnest()
 
 # Filtering out background noise listed genes
 # Marker genes from Kuppe et al
@@ -131,33 +128,10 @@ mrkr_genes <- mrkr_genes %>% #dplyr::filter(!name %in% exclude_ct) %>%
   dplyr::filter(FDR < 0.01, logFC > 1) %>%
   dplyr::select(name, gene) %>%
   dplyr::rename("lineage" = name) %>%
-  group_by(gene) %>%
+  group_by(lineage) %>%
   nest() %>%
   dplyr::mutate(data = map(data, ~.x[[1]])) %>%
-  dplyr::mutate(gene_type = "marker_gene")
-
-# Here are genes that aren't cell type markers
-ok_genes <- pagoda_hvgs %>%
-  left_join(mrkr_genes, by = "gene") %>%
-  dplyr::filter(is.na(gene_type)) %>%
-  dplyr::select(name, gene)
-
-# Here are genes selected as HVG that are marker
-# genes, we will keep only genes if they appear
-# in the right cell
-blacklist_genes <- pagoda_hvgs %>%
-  left_join(mrkr_genes, by = "gene") %>%
-  na.omit() %>%
-  unnest() %>%
-  dplyr::filter(name == data) %>%
-  dplyr::select(name, gene)
-
-pagoda_hvgs <- bind_rows(ok_genes, 
-                         blacklist_genes) %>%
-  group_by(name) %>%
-    nest() %>%
-    dplyr::mutate(data = map(data, ~.x[[1]])) %>%
-    deframe()
+  deframe()
 
 # Do all processing of counts matrices
 pb_dat <- create_init_exp(counts = counts,
@@ -172,6 +146,8 @@ pb_dat <- create_init_exp(counts = counts,
   filt_gex_byhvg(pb_dat_list = .,
                  prior_hvg = pagoda_hvgs,
                  var.threshold = NULL) %>%
+  filt_gex_bybckgrnd(pb_dat_list = ., 
+                     prior_mrks = mrkr_genes) %>%
   pb_dat2MOFA(pb_dat_list = .)
 
 saveRDS(pb_dat, "./data_MI/mi_pb_red.rds")
