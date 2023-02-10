@@ -189,7 +189,9 @@ patient_sw %>% group_by(patient_group) %>%
     
   })) %>%
   dplyr::select(patient_group, comp_sw) %>%
-  unnest() 
+  unnest() %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(adj_p = p.adjust(p.value))
 
 # Paper panel
 pdf("./results/MI/comparison/sw_patientbatch.pdf", height = 2.5, width = 6.5)

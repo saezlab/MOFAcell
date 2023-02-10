@@ -12,6 +12,8 @@ editor_options:
 ```{r setup, include=FALSE}
 library(tidyverse)
 library(ComplexHeatmap)
+library(decoupleR)
+source("./MOFAcell/factorutils.R")
 ```
 
 ```{r}
@@ -162,7 +164,104 @@ draw(ht_list)
 dev.off()
 ```
 
+# An alternative analysis is to use PROGENy
+
+```{r}
+model_outfile <- "./results/MI/MOFA_mcell/MI_model6factors.hdf5"
+model <- MOFA2::load_model(model_outfile)
+```
+
+```{r}
+factor_loadings <- get_floadings(model = model,
+                                   factor = "Factor1") %>%
+  dplyr::filter(abs(value)>=0.1) %>%
+  pivot_wider(names_from = ctype, values_from = value, values_fill = 0) %>%
+  column_to_rownames("feature") %>%
+  as.matrix()
+
+```
+
+```{r}
+net <- get_progeny(organism = 'human', top = 1000)
+```
+
+```{r}
+net <- gsets$MSIGDB_HMARKS %>%
+  enframe(name = "source",value = "target") %>%
+  unnest() %>% 
+  dplyr::mutate(weight = 1,
+                source =  gsub("HALLMARK_", "", source))
+  
+```
+
+```{r}
+col_fun_scores <- circlize::colorRamp2(seq(-5, 5, length = 50), hcl.colors(50,"TealRose",rev = T))
+
+ct_acts <- run_wmean(mat=factor_loadings, net=net, .source='source', .target='target',
+                  .mor='weight', times = 1000, minsize = 5)
+
+ct_acts_mat <- ct_acts %>%
+  dplyr::filter(statistic == "norm_wmean") %>%
+  dplyr::mutate(score = ifelse(score <= -5, -5, score)) %>%
+  dplyr::select(source, condition, score) %>%
+  pivot_wider(values_from = score, names_from = condition) %>%
+  column_to_rownames("source") %>%
+  as.matrix()
+
+hmap <- ComplexHeatmap::Heatmap(t(ct_acts_mat), 
+                        name = "progeny", 
+                        col = col_fun_scores, 
+                        show_row_dend = FALSE,
+                        show_column_dend = FALSE)
+
+pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/progeny_res.pdf", height = 2.7, width = 5.5)
+draw(hmap)
+dev.off()
+
+draw(hmap)
+```
+
+## Hallmarks
+
+```{r}
+net <- gsets$MSIGDB_HMARKS %>%
+  enframe(name = "source",value = "target") %>%
+  unnest() %>% 
+  dplyr::mutate(weight = 1,
+                source =  gsub("HALLMARK_", "", source))
+
+ct_acts <- run_wmean(mat=factor_loadings, net=net, .source='source', .target='target',
+                  .mor='weight', times = 1000, minsize = 5)
+
+```
+
+```{r}
+col_fun_scores <- circlize::colorRamp2(seq(-5, 5, length = 50), hcl.colors(50,"Blue-Red 2",rev = F))
+
+ct_acts_mat <- ct_acts %>%
+  dplyr::filter(statistic == "norm_wmean") %>%
+  dplyr::mutate(score = ifelse(score <= -5, -5, score)) %>%
+  dplyr::select(source, condition, score) %>%
+  pivot_wider(values_from = score, names_from = condition) %>%
+  column_to_rownames("source") %>%
+  as.matrix()
+
+sel_paths <- names(rowMeans(abs(ct_acts_mat)) %>% sort(decreasing = TRUE)) 
 
 
+hmap <- ComplexHeatmap::Heatmap((ct_acts_mat[sel_paths[1:25],]), 
+                        name = "normalized \nscore", 
+                        col = col_fun_scores, 
+                        show_row_dend = FALSE,
+                        row_names_gp = grid::gpar(fontsize = 8),
+                        column_names_gp = grid::gpar(fontsize = 11),
+                        show_column_dend = FALSE)
+
+pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/hallmarks_res.pdf", height = 3.8, width = 4.3)
+draw(hmap)
+dev.off()
+
+draw(hmap)
+```
 
 

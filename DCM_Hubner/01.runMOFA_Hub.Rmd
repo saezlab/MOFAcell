@@ -455,7 +455,7 @@ model@cache$variance_explained$r2_total$single_group %>% mean()
 ### Factors associated with patient group
 ```{r}
 useful_factors <- expl_var_pgroup %>%
-  dplyr::filter(adj_pvalue < 0.15) %>%
+  dplyr::filter(adj_pvalue < 0.05) %>%
   pull(Factor)
 
 print(useful_factors)

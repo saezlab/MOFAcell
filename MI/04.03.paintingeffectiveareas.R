@@ -38,7 +38,7 @@ module_folder <- "./results/MI/MOFA_mcell/factor_desc/Factor1_char/decoupler_ct/
 param_df <- list.files(module_folder) %>%
   enframe(value = "file") %>%
   dplyr::select(-name) %>%
-  dplyr::filter(grepl("msk", file)) %>%
+  dplyr::filter(grepl("msk.csv", file)) %>%
   dplyr::mutate(slide = gsub("_msk.csv", "", file)) %>%
   left_join(visium_df, by = "slide") %>%
   dplyr::mutate(file = paste0(module_folder,file))
@@ -50,8 +50,8 @@ extract_max_vals <- function(file_path) {
   scores <- read_csv(file_path, show_col_types = F) %>%
     pivot_longer(-spot_id) %>%
     dplyr::select(-spot_id) %>%
-    dplyr::mutate(name = strsplit(name, "_") %>%
-                  map_chr(., ~.x[[1]])) %>%
+    #dplyr::mutate(name = strsplit(name, "_") %>%
+    #              map_chr(., ~.x[[1]])) %>%
     group_by(name) %>%
     dplyr::summarise(max_val = max(value))
   
@@ -82,13 +82,13 @@ extract_visium_scores <- function(file, slide, visium_file) {
     column_to_rownames("spot_id") %>%
     as.matrix()
   
-  ix <- colnames(scores) %>%
-    strsplit(., "_") %>%
-    map_chr(., ~.x[[1]])
+  ix <- colnames(scores) #%>%
+    #strsplit(., "_") %>%
+    #map_chr(., ~.x[[1]])
   
   
   # Here we make the scores RGB friendly
-  # scores <- sweep(scores, MARGIN = 2, STATS = apply(scores, 2, max), FUN = "/")
+  #scores <- sweep(scores, MARGIN = 2, STATS = apply(scores, 2, max), FUN = "/")
   
   scores <- sweep(scores, MARGIN = 2, STATS = norm_fact[ix], FUN = "/")
   
@@ -104,18 +104,25 @@ extract_visium_scores <- function(file, slide, visium_file) {
 
 }
 
-score_list <- pmap(param_df, extract_visium_scores)
-names(score_list) <- param_df$slide
+score_list <- param_df %>%
+  dplyr::filter(slide %in% c("Visium_1_CK279", "Visium_14_CK292" ,"Visium_15_CK293")) %>%
+  pmap(., extract_visium_scores)
+
+names(score_list) <- param_df %>%
+  dplyr::filter(slide %in% c("Visium_1_CK279", "Visium_14_CK292" ,"Visium_15_CK293")) %>%
+  pull(slide)
 
 
 # Trying paintR
 
 # For a given cell-type paint the healthy and disease areas
 
-paintCTs <- function(score_list_obj, ct, col_select = c("red", "blue")) {
+paintCTs <- function(score_list_obj, ct, col_select = c("blue", "red")) {
   
   ct_names <- colnames(score_list_obj$scores)
-  ct_select <- ct_names[grepl(ct, ct_names)]
+  ct_select <- ct_names[grepl(ct, ct_names)] %>%
+    sort() # so as to have neg always first
+  
   comb_comps_cols <-  matrix_to_hex(spot_matrix = score_list_obj$scores[,ct_select] %>%
                                       t(), colors = col_select)
   
@@ -124,7 +131,7 @@ paintCTs <- function(score_list_obj, ct, col_select = c("red", "blue")) {
   
   
   slide_plt <- ggplot(coordinate_data, aes(x = imagecol, y = imagerow * -1, color = spot_id)) +
-    geom_point() +
+    geom_point(size = 0.5) +
     scale_color_manual(values = set_names(coordinate_data$hex, coordinate_data$spot_id)) +
     theme_minimal() +
     theme(legend.position = "none",
@@ -137,81 +144,32 @@ paintCTs <- function(score_list_obj, ct, col_select = c("red", "blue")) {
                                           colour = "black")) +
     xlab("") + ylab("")
   
-  #Legend
-  legend <- ggplot(comb_comps_cols$legend_key, aes(y = name, x = 1, fill = name)) +
-    geom_tile() +
-    scale_fill_manual(values = set_names(comb_comps_cols$legend_key$hex, comb_comps_cols$legend_key$name)) +
-    ylab("") +
-    xlab("") +
-    coord_equal() +
-    theme(legend.position = "none",
-          axis.text = element_text(size = 12),
-          axis.title.x=element_blank(),
-          axis.text.x=element_blank(),
-          axis.ticks.x= element_blank(),
-          panel.grid.major = element_blank(),
-          panel.grid.minor = element_blank()) +
-    xlab("")
-  
-  f_plot <- cowplot::plot_grid(slide_plt, legend, rel_widths = c(1,0.4))
-  
-  return(f_plot)
+  return(slide_plt)
 }
 
 # Paint for CMs
+cts <- c("CM","Endo",  "Fib", "Myeloid") %>%
+  set_names() 
 
-fibrotic_CM <- paintCTs(score_list_obj = score_list$AKK001_157785,
-                        ct = "CM",col_select = c("red","blue"))
+myogenic_column <- map(cts, paintCTs, 
+                       score_list_obj = score_list$Visium_1_CK279,
+                       col_select = c("blue", "red")) %>%
+  cowplot::plot_grid(plotlist = ., ncol = 1, align = "hv")
 
-pdf("./results/MI/paintR/CM_fibrotic.pdf", height = 4, width = 5.5)
+fibrotic_column <- map(cts, paintCTs, 
+                       score_list_obj = score_list$Visium_14_CK292,
+                       col_select = c("blue", "red")) %>%
+  cowplot::plot_grid(plotlist = ., ncol = 1, align = "hv")
 
-plot(fibrotic_CM)
+ischemic_column <- map(cts, paintCTs, 
+                       score_list_obj = score_list$Visium_15_CK293,
+                       col_select = c("blue", "red")) %>%
+  cowplot::plot_grid(plotlist = ., ncol = 1, align = "hv")
 
-dev.off()
+spatial_map <- cowplot::plot_grid(myogenic_column, ischemic_column, fibrotic_column, ncol = 3)
 
-healthy_CM <- paintCTs(score_list_obj = score_list$AKK006_157771,
-                        ct = "CM",col_select = c("red","blue"))
+pdf("./results/MI/paintR/spatial_map.pdf", height = 6, width = 5)
 
-pdf("./results/MI/paintR/CM_healthy.pdf", height = 4, width = 5.5)
-
-plot(healthy_CM)
-
-dev.off()
-
-ischemic_CM <- paintCTs(score_list_obj = score_list$Visium_19_CK297,
-                       ct = "CM",col_select = c("red","blue"))
-
-pdf("./results/MI/paintR/CM_ischemic.pdf", height = 4, width = 5.5)
-
-plot(ischemic_CM)
-
-dev.off()
-
-# Paint for Fibs
-
-fibrotic_Fib <- paintCTs(score_list_obj = score_list$AKK001_157785,
-                        ct = "Fib",col_select = c("red","blue"))
-
-pdf("./results/MI/paintR/Fib_fibrotic.pdf", height = 4, width = 5.5)
-
-plot(fibrotic_Fib)
-
-dev.off()
-
-healthy_Fib <- paintCTs(score_list_obj = score_list$AKK006_157771,
-                       ct = "Fib",col_select = c("red","blue"))
-
-pdf("./results/MI/paintR/Fib_healthy.pdf", height = 4, width = 5.5)
-
-plot(healthy_Fib)
-
-dev.off()
-
-ischemic_Fib <- paintCTs(score_list_obj = score_list$Visium_19_CK297,
-                        ct = "Fib",col_select = c("red","blue"))
-
-pdf("./results/MI/paintR/Fib_ischemic.pdf", height = 4, width = 5.5)
-
-plot(ischemic_Fib)
+plot(spatial_map)
 
 dev.off()

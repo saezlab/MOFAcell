@@ -380,9 +380,9 @@ row_anns <- get_factors(model, factors = "all")[[1]] %>%
 
 row_ha <- rowAnnotation(patient_group = row_anns$disease,
                        sex = row_anns$sex,
-                       col = list(patient_group = c("HCM" = "darkblue",
-                                                    "NF" = "darkred", 
-                                                    "DCM"= "darkgreen"),
+                       col = list(patient_group = c("HCM" = "#4169E1",
+                                                    "NF" = "#FF6666", 
+                                                    "DCM"= "#3CB371"),
                                   sex = c("male" = "black",
                                             "female" = "darkgrey")),
                        gap = unit(2.5, "mm"),
@@ -455,7 +455,7 @@ model@cache$variance_explained$r2_per_factor$single_group[useful_factors,,drop =
 ### Factors associated with DCM vs HCM
 ```{r}
 useful_factors <- expl_var_hcm %>%
-  dplyr::filter(adj_pvalue < 0.15) %>%
+  dplyr::filter(adj_pvalue < 0.05) %>%
   pull(Factor)
 
 print(useful_factors)
@@ -471,7 +471,7 @@ model@cache$variance_explained$r2_per_factor$single_group[useful_factors,,drop =
 ### Factors associated with sex
 ```{r}
 useful_factors <- expl_var_sex %>%
-  dplyr::filter(adj_pvalue < 0.15) %>%
+  dplyr::filter(adj_pvalue < 0.05) %>%
   pull(Factor)
 
 print(useful_factors)

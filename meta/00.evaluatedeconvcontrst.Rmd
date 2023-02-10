@@ -1,0 +1,80 @@
+---
+title: "Deconvolution evaluation (contrast)"
+author: "Ricardo Ramirez"
+date: "2023-01-24"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+After knowing that deconvolution using HCA works in both HF atlases. Now we evaluate if the differences across patient groups are also conserved
+
+```{r}
+library(tidyverse)
+library(compositions)
+library(ggpubr)
+```
+
+```{r}
+ct_codes <- c("CM", "Endo", "Fib", "Lymphoid", "Myeloid", "PC", "vSMCs")
+ct_names <- c("Ventricular_Cardiomyocyte", "Endothelial", "Fibroblast", "Lymphoid", "Myeloid", "Pericytes", "Smooth_muscle_cells")
+
+ct_dict <- tibble(ct_codes, ct_names)
+```
+
+```{r}
+allmeta <- read_csv("./results/META/allmeta.csv")
+```
+
+```{r}
+props_studies <- readRDS("./data_META/deconvo_proportions.rds") %>%
+  map(. , function(prop_list) {
+    
+    map(prop_list, function(mat) {
+      
+      compositions::clr(t(mat)) %>% #CLR ON COMPOSITIONS
+        t() %>%
+        as.data.frame() %>%
+        rownames_to_column("ct") %>%
+        pivot_longer(-ct, names_to = "sample", values_to = "prop")
+      
+    }) %>%
+      enframe(name = "typeprop") %>%
+      unnest()
+  }) %>%
+  enframe(name = "group") %>%
+  unnest() %>%
+  left_join(allmeta, by = c("sample", "group")) %>%
+  dplyr::mutate(HF = ifelse(disease == "NF", "no", "yes"))
+```
+
+## Perform differential expression analysis
+
+```{r}
+composition_diffs <- props_studies %>%
+  group_by(ct, group, typeprop) %>%
+  nest() %>%
+  mutate(dca = map(data, function(dat){
+    
+    t.test(formula = prop ~ HF,
+           data = dat) %>%
+      broom::tidy()
+    
+  })) %>%
+  dplyr::select(ct, group,typeprop, dca) %>%
+  unnest() %>%
+   arrange(ct, group)
+
+
+
+composition_diffs %>%
+  dplyr::select(ct, group, typeprop, statistic) %>%
+  ggplot(aes(x = ct, y = statistic, color = typeprop)) +
+  facet_grid(rows = vars(group)) +
+  geom_point() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+
+```
+
+

@@ -507,20 +507,20 @@ summarize_factor_lite <- function(model,
   # Filter genes based on a loading cut-off
   
   model_size <- factor_loadings_filt %>%
-    dplyr::mutate(direction = ifelse(value > 0 , "Disease", "Healthy")) %>%
+    dplyr::mutate(direction = ifelse(value > 0 , "Ischemic-like", "Myogenic-like")) %>%
     group_by(ctype, direction) %>%
     summarise(used_genes = length(feature)) %>%
     arrange(-used_genes)
   
   model_size_bar <- model_size %>%
-    ggplot(aes(x = ctype, y = used_genes, fill =direction)) +
+    ggplot(aes(x = ctype, y = log10(used_genes), fill =direction)) +
     geom_bar(stat = "identity", position = "dodge") +
     theme_classic() +
     theme(axis.text = element_text(size = 9),
           axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
-    scale_fill_manual(values = c("darkred", "darkblue")) +
+    scale_fill_manual(values = c("#FF6666", "#4169E1")) +
     xlab("") +
-    ylab("Number of genes")
+    ylab("log10(Number of genes)")
   
   pdf(paste0(res_dir, "model_size_bar.pdf"), height = 2.3, width = 3.2)
   
@@ -541,14 +541,14 @@ summarize_factor_lite <- function(model,
     group_by(n_cells) %>%
     summarize(count = length(n_cells))
   
-  shared_genes_plt <- ggplot(shared_genes, aes(x = count, y = paste(n_cells, "types"))) +
+  shared_genes_plt <- ggplot(shared_genes, aes(x = log10(count), y = paste(n_cells, "types"))) +
     geom_bar(stat = "identity") +
     theme_minimal() +
     theme(axis.text.y = element_text(size = 12),
-          axis.text.x = element_text(size = 8)) +
+          axis.text.x = element_text(size = 12)) +
     theme(plot.margin = unit(c(0,1,0.2,0.2), "cm")) +
     ylab("number of cell types") +
-    xlab("number of genes")
+    xlab("log10(number of genes)")
   
   pdf(paste0(res_dir, "shared_genes_plt.pdf"), height = 2.3, width = 2.7)
   
@@ -624,7 +624,7 @@ summarize_factor_lite <- function(model,
     theme(axis.text = element_text(size = 12),
           axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
           panel.border = element_rect(colour = "black", fill=NA)) +
-    scale_fill_manual(values = c("darkred", "darkblue")) +
+    scale_fill_manual(values = c("#FF6666", "#4169E1")) +
     coord_equal() +
     xlab("") + ylab("")
   

@@ -10,6 +10,7 @@ editor_options:
 ```{r setup, include=FALSE}
 library(tidyverse)
 library(MOFA2)
+library(decoupleR)
 source("./MOFAcell/factorutils.R")
 ```
 
@@ -22,149 +23,50 @@ pb_data <- read_csv("./results/META/alldat.csv")
 meta <- read_csv("./results/META/allmeta.csv")
 ```
 
-
 ```{r}
-# Get loadings
 factor_loadings <- get_floadings(model = model,
                                    factor = "Factor1") %>%
-    dplyr::filter(abs(value) >= 0.1) %>%
-  dplyr::mutate(sign_type = ifelse(value > 0, "NF", "HF")) %>%
-  dplyr::mutate(sign_type = paste0(ctype, "_", sign_type)) %>%
-  dplyr::select(sign_type, feature) %>%
-  group_by(sign_type) %>%
-  nest() %>%
-  mutate(data = map(data, ~.x[[1]])) %>%
-  deframe()
+  dplyr::filter(abs(value)>=0.1) %>%
+  pivot_wider(names_from = ctype, values_from = value, values_fill = 0) %>%
+  column_to_rownames("feature") %>%
+  as.matrix()
 
-print("N genes in model")
-length(unlist(factor_loadings) %>% unique)
+get_floadings(model = model,
+              factor = "Factor1") %>%
+  dplyr::filter(abs(value)>=0.1) %>% 
+  write_csv("./results/META/MOFAcell_metaloadings.csv")
+
 ```
 
 ```{r}
-gsets <- readRDS("./aux_data/Genesets_Dec19.rds")
-```
-
-## Hypergeometric test for functional enrichment
-
-```{r}
-GSE_analysis <- function(geneList,Annotation_DB){
-  
-  geneList = geneList[geneList %in% unique(unlist(Annotation_DB))]
-  
-  ResultsDF = matrix(0,nrow = length(Annotation_DB),ncol = 5)
-  rownames(ResultsDF) = names(Annotation_DB)
-  colnames(ResultsDF) = c("GenesInPathway","GenesInList","GeneNames","p_value","corr_p_value")
-  
-  DB_genecontent = length(unique(unlist(Annotation_DB)))
-  GenesDB = DB_genecontent 
-  SelectedGenes = length(geneList)
-  
-  for(gset in rownames(ResultsDF)){
-    GP = length(Annotation_DB[[gset]])
-    GL = length(intersect(Annotation_DB[[gset]],geneList))
-    
-    ResultsDF[gset,"GenesInList"] = GL
-    ResultsDF[gset,"GenesInPathway"] = GP
-    ResultsDF[gset,"GeneNames"] = paste(intersect(Annotation_DB[[gset]],geneList),collapse = ",")
-    ResultsDF[gset,"p_value"] = phyper(q=GL - 1, m=GP, n=GenesDB-GP, k=SelectedGenes, lower.tail = FALSE, log.p = FALSE)
-  }
-  
-  ResultsDF[,"corr_p_value"] = p.adjust(ResultsDF[,"p_value"],method = "BH")
-  ResultsDF = data.frame(ResultsDF,stringsAsFactors = F)
-  ResultsDF = ResultsDF[order(ResultsDF[,"p_value"]),]
-  
-  ResultsDF = ResultsDF %>% 
-    rownames_to_column("gset") %>% 
-    mutate_at(c("GenesInPathway","GenesInList",
-                "p_value","corr_p_value"), 
-              as.numeric) %>% 
-    dplyr::arrange(corr_p_value,GenesInList)
-  
-  return(ResultsDF)
-}
-```
-
-# Main
-
-```{r}
-cts_enrichment <- map(factor_loadings, GSE_analysis, Annotation_DB = gsets$MSIGDB_REACTOME)
+net <- get_progeny(organism = 'human', top = 500)
 ```
 
 ```{r}
-col_fun_fact <- circlize::colorRamp2(seq(0, 5, length = 50), hcl.colors(50, "Blues",rev = T))
 
-neg_sets <- cts_enrichment %>% 
-  enframe() %>%
-  unnest() %>%
-  dplyr::filter(corr_p_value < 0.25,
-                grepl("HF",name)) %>%
-  dplyr::group_by(name) %>%
-  dplyr::slice(1:10) %>%
-  pull(gset)
-  
-neg_enrichment <- cts_enrichment %>% 
-  enframe() %>%
-  unnest() %>%
-  dplyr::filter(gset %in% neg_sets,
-                grepl("HF",name)) %>%
-  dplyr::mutate(corr_p_value = -log10(corr_p_value)) %>%
-  dplyr::mutate(corr_p_value = ifelse(corr_p_value > 5, 5, corr_p_value)) %>%
-  dplyr::mutate(gset = gsub("REACTOME_", "", gset) %>% strtrim(width = 35),
-                name = gsub("_HF", "", name))
-                
-pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/functional_healthy.pdf", height = 3.4, width = 3.8)
+col_fun_scores <- circlize::colorRamp2(seq(-5, 5, length = 50), hcl.colors(50,"Blue-Red 2",rev = F))
 
-neg_enrichment %>%
-  dplyr::select(name, gset, corr_p_value) %>%
-  pivot_wider(names_from = name, values_from = corr_p_value) %>%
-  column_to_rownames("gset") %>%
-  as.matrix() %>%
-  #t() %>%
-  ComplexHeatmap::Heatmap(., name = "-log10(p)",
-                          show_row_dend = F, 
-                          show_column_dend = F, 
-                          row_names_gp = grid::gpar(fontsize = 6),
-                          column_names_gp = grid::gpar(fontsize = 10),
-                          col = col_fun_fact)
+ct_acts <- run_wmean(mat=factor_loadings, net=net, .source='source', .target='target',
+                  .mor='weight', times = 1000, minsize = 5)
 
+ct_acts_mat <- ct_acts %>%
+  dplyr::filter(statistic == "norm_wmean") %>%
+  dplyr::mutate(score = ifelse(score <= -5, -5, score)) %>%
+  dplyr::select(source, condition, score) %>%
+  pivot_wider(values_from = score, names_from = condition) %>%
+  column_to_rownames("source") %>%
+  as.matrix()
+
+hmap <- ComplexHeatmap::Heatmap(t(ct_acts_mat), 
+                        name = "progeny", 
+                        col = col_fun_scores, 
+                        show_row_dend = FALSE,
+                        show_column_dend = FALSE)
+
+pdf("./results/META/MOFA_mcell/progeny_res.pdf", height = 2.7, width = 5.5)
+draw(hmap)
 dev.off()
 
+draw(hmap)
 ```
 
-```{r}
-col_fun_fact <- circlize::colorRamp2(seq(0, 5, length = 50), hcl.colors(50,"Reds",rev = T))
-
-pos_sets <- cts_enrichment %>% 
-  enframe() %>%
-  unnest() %>%
-  dplyr::filter(corr_p_value < 0.25,
-                grepl("NF",name)) %>%
-  dplyr::group_by(name) %>%
-  dplyr::slice(1:5) %>%
-  pull(gset)
-  
-pos_enrichment <- cts_enrichment %>% 
-  enframe() %>%
-  unnest() %>%
-  dplyr::filter(gset %in% pos_sets,
-                grepl("NF",name)) %>%
-  dplyr::mutate(corr_p_value = -log10(corr_p_value)) %>%
-  dplyr::mutate(corr_p_value = ifelse(corr_p_value > 5, 5, corr_p_value)) %>%
-  dplyr::mutate(gset = gsub("REACTOME_", "", gset) %>% strtrim(width = 35),
-                name = gsub("_NF", "", name))
-
-pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/functional_dis.pdf", height = 3, width = 3.8)
-
-pos_enrichment %>%
-  dplyr::select(name, gset, corr_p_value) %>%
-  pivot_wider(names_from = name, values_from = corr_p_value) %>%
-  column_to_rownames("gset") %>%
-  ComplexHeatmap::Heatmap(., name = "-log10(p)",
-                          show_row_dend = F, 
-                          show_column_dend = F, 
-                          row_names_gp = grid::gpar(fontsize = 7),
-                          column_names_gp = grid::gpar(fontsize = 10),
-                          col = col_fun_fact)
-
-dev.off()
-```

@@ -274,9 +274,9 @@ row_anns <- factor_scores %>%
 
 row_ha <- rowAnnotation(condition = row_anns$patient_group,
                        batch = row_anns$batch,
-                       col = list(condition = c("fibrotic" = "darkblue",
-                                                   "myogenic" = "darkred", 
-                                                   "ischemic" = "darkgreen"),
+                       col = list(condition = c("fibrotic" = "#4169E1",
+                                                   "myogenic" = "#FF6666", 
+                                                   "ischemic" = "#3CB371"),
                                   batch = c("A" = "black",
                                             "B" = "darkgrey")),
                        gap = unit(2.5, "mm"),

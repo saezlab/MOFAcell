@@ -53,7 +53,7 @@ dr_res <- map(reheat, function(x) {
                                  .source = ctype, 
                                  .target = feature,
                                  .mor = value) %>%
-    dplyr::filter(statistic == "wmean")
+    dplyr::filter(statistic == "norm_wmean")
   
   dR_run <- dR_run  %>%
     left_join(x$TARGETS %>%
@@ -64,6 +64,59 @@ dr_res <- map(reheat, function(x) {
   enframe() %>%
   unnest()
 ```
+
+## Make matrix with all scores
+```{r}
+sample_info <- dr_res %>%
+  dplyr::select(condition, HeartFailure, name) %>%
+  unique() %>%
+  dplyr::mutate(sample_id = paste0(name, "_", condition)) %>%
+  column_to_rownames("sample_id")
+
+ds_mat <- dr_res %>%
+  dplyr::mutate(sample_id = paste0(name, "_", condition)) %>%
+  dplyr::select(sample_id, source, score) %>%
+  pivot_wider(names_from = source, values_from = score) %>%
+  column_to_rownames("sample_id")
+
+ds_mat <- as.matrix(ds_mat) %>%
+  scale()
+
+saveRDS(ds_mat, "./results/META/ds_mofacell_mat.rds")
+```
+
+```{r}
+ht_opt$ROW_ANNO_PADDING <- unit(2.5, "mm")
+ht_opt$COLUMN_ANNO_PADDING <- unit(2.5, "mm")
+
+# Association colors
+
+col_fun_scores <- circlize::colorRamp2(seq(-5, 5, length = 30), hcl.colors(30,"Green-Brown",rev = T))
+
+row_ha <- rowAnnotation(HF = sample_info[rownames(ds_mat),"HeartFailure"],
+                       col = list(HF = c("no" = "grey", 
+                                                    "yes"= "black")),
+                       gap = unit(2.5, "mm"),
+                       border = TRUE)
+
+scores_hmap <- Heatmap(ds_mat[, sort(colnames(ds_mat))], 
+        name = "cell type \ndisease", 
+        right_annotation = row_ha,
+        cluster_columns = FALSE, 
+        show_row_dend = FALSE,
+        show_row_names = FALSE,
+        border = TRUE,
+        gap = unit(2.5, "mm"),
+        col = col_fun_scores)
+
+pdf("./results/META/reheat_ct_scores.pdf", height = 4, width = 2.3)
+
+draw(scores_hmap)
+
+dev.off()
+
+```
+
 
 # Test the difference between cell-type disease scores across cell-types 
 
@@ -89,6 +142,8 @@ ct_ds_stat <- ct_ds %>%
   dplyr::mutate(p_adj = p.adjust(p.value)) %>%
   dplyr::select(source, name, statistic, estimate, p.value, p_adj) %>%
   dplyr::mutate(significance = ifelse(p_adj <= 0.1, "*", ""))
+
+saveRDS(ct_ds_stat, "./results/META/mofacell_ds_hftest.rds")
 ```
 
 # Show the example of one study
@@ -111,17 +166,16 @@ example_violin <- ct_ds %>%
 
 plot(example_violin)
 
-pdf("./results/META/bulk_deconv_example.pdf", height = 4, width = 2.5)
+pdf("./results/META/bulk_deconv_example.pdf", height = 4, width = 2.3)
 plot(example_violin)
 dev.off()
 ```
-
 
 ```{r, fig.height=3.7, fig.width= 3.5}
 # Here we are using the difference between the means of standardized scores
 reheat_stats_plt <- ggplot(ct_ds_stat, aes(y = name, 
                        x  = source, 
-                       fill = estimate,
+                       fill = statistic,
                        label = significance)) +
   geom_tile() +
   geom_text() +
@@ -138,48 +192,3 @@ pdf("./results/META/reheat_stats_plt.pdf", height = 4, width = 4)
 plot(reheat_stats_plt)
 dev.off()
 ```
-
-```{r, fig.height=4, fig.width= 4}
-scaled_stats <- ct_ds_stat %>%
-  arrange(name) %>%
-  dplyr::group_by(name) %>%
-  mutate(scaled_stat = (statistic - mean(statistic))/sd(statistic)) 
-
-scaled_stats_mat <- scaled_stats %>%
-  dplyr::select(source, name, scaled_stat) %>%
-  pivot_wider(names_from = name, values_from = scaled_stat) %>%
-  column_to_rownames("source") %>%
-  as.matrix()
-
-column_order <- hclust(dist(scaled_stats_mat))
-column_order <- column_order$labels[column_order$order]
-
-row_order <- hclust(dist(t(scaled_stats_mat)))
-row_order <- row_order$labels[row_order$order]
-
-scaled_stats %>%
-  dplyr::mutate(name = factor(name,
-                              levels = row_order),
-                source = factor(source,
-                                levels = column_order)) %>%
-  ggplot(., aes(y = name, 
-                       x  = source, 
-                       fill = scaled_stat,
-                       label = significance)) +
-  geom_tile() +
-  geom_text() +
-  scale_fill_gradient2() +
-  theme(axis.text = element_text(size =12),
-    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
-  ylab("") +
-  xlab("") +
-  coord_equal()
-```
-
-
-
-
-
-
-
-

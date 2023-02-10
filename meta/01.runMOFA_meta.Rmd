@@ -67,14 +67,42 @@ coldat_hub <- read_csv("./data_DCMACM_Science/pb_coldata.csv",
   dplyr::rename(ncells = "counts")
 
 # Read normalized data w/ prior genes from broad
-hub_dat <- readRDS("./data_DCMACM_Science/pb_red_wprior.rds")
+#hub_dat <- readRDS("./data_DCMACM_Science/pb_red_wprior.rds")
+hub_dat <- readRDS("./data_DCMACM_Science/pb_red.rds")
+
+```
+
+# Per gene take the variable genes that occurr in both
+
+```{r}
+#Hubner genes
+hub_features <- hub_dat %>%
+  dplyr::select(view, feature) %>%
+  unique() %>%
+  mutate(study = "Reichart2022")
+
+broad_features <- broad_dat %>%
+  dplyr::select(view, feature) %>%
+  unique() %>%
+  mutate(study = "Chaffin2022")
+
+all_features <- bind_rows(hub_features, broad_features) %>% 
+  group_by(view, feature) %>% 
+  summarize(n_times = n()) %>% 
+  dplyr::filter(n_times == 2)
+
+all_features %>%
+  summarize(n_genes = n())
 ```
 
 # Filter Broad data to contain only Science genes
 
 ```{r}
 broad_dat <- broad_dat %>%
-  dplyr::filter(feature %in% unique(hub_dat$feature))
+  dplyr::filter(feature %in% unique(all_features$feature))
+
+hub_dat <- hub_dat %>%
+  dplyr::filter(feature %in% unique(all_features$feature))
 ```
 
 # Generating the meta analysis
@@ -199,13 +227,87 @@ expl_var_pgroup
 ```
 
 ```{r}
-get_allfscores(model = model, meta = all_meta) %>%
+stat.test <- get_allfscores(model = model, meta = all_meta) %>%
   dplyr::filter(Factor %in% c("Factor1")) %>%
-  ggplot(aes(x = disease, y = value, fill = group)) +
+  dplyr::mutate(HF = ifelse(disease == "NF", "NF", "HF")) %>%
+  ggpubr::compare_means(formula = value ~ HF, 
+                        group.by = "group")
+
+print(stat.test)
+```
+
+```{r}
+stat.test <- get_allfscores(model = model, meta = all_meta) %>%
+  dplyr::filter(Factor %in% c("Factor2")) %>%
+  dplyr::mutate(HF = ifelse(disease == "NF", "NF", "HF")) %>%
+  ggpubr::compare_means(formula = value ~ HF, 
+                        group.by = "group")
+
+print(stat.test)
+```
+
+```{r}
+stat.test <- get_allfscores(model = model, meta = all_meta) %>%
+  dplyr::filter(Factor %in% c("Factor3")) %>%
+  dplyr::mutate(HF = ifelse(disease == "NF", "NF", "HF")) %>%
+  ggpubr::compare_means(formula = value ~ HF, 
+                        group.by = "group")
+
+print(stat.test)
+```
+
+
+```{r}
+pdf("./results/META/FactorScores_HFbox.pdf", height = 3, width = 2.5)
+
+plt_box <- get_allfscores(model = model, meta = all_meta) %>%
+  dplyr::filter(Factor %in% c("Factor1")) %>%
+  dplyr::mutate(HF = ifelse(disease == "NF", "NF", "HF")) %>%
+  ggplot(aes(x = group, y = value, fill = HF)) +
   geom_boxplot() +
-  geom_jitter() +
-  theme_classic()
-  facet_wrap(. ~ group)
+  theme_classic() +
+  scale_fill_manual(values = c("black", "grey")) +
+  theme(axis.text = element_text(size = 12),
+        axis.title = element_text(size = 12),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust =0.5)) +
+  ylab("Factor 1 score") +
+  xlab("Study")
+
+plot(plt_box)
+
+dev.off()
+```
+
+```{r}
+get_allfscores(model = model, meta = all_meta) %>%
+  dplyr::filter(Factor %in% c("Factor2")) %>%
+  dplyr::mutate(HF = ifelse(disease == "NF", "NF", "HF")) %>%
+  ggplot(aes(x = group, y = value, fill = HF)) +
+  geom_boxplot() +
+  theme_classic() +
+  scale_fill_manual(values = c("black", "grey")) +
+  theme(axis.text = element_text(size = 12),
+        axis.title = element_text(size = 12),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust =0.5)) +
+  ylab("Factor 1 score") +
+  xlab("Study")
+
+```
+
+```{r}
+get_allfscores(model = model, meta = all_meta) %>%
+  dplyr::filter(Factor %in% c("Factor3")) %>%
+  dplyr::mutate(HF = ifelse(disease == "NF", "NF", "HF")) %>%
+  ggplot(aes(x = group, y = value, fill = HF)) +
+  geom_boxplot() +
+  theme_classic() +
+  scale_fill_manual(values = c("black", "grey")) +
+  theme(axis.text = element_text(size = 12),
+        axis.title = element_text(size = 12),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust =0.5)) +
+  ylab("Factor 1 score") +
+  xlab("Study")
+
 ```
 
 ```{r, fig.height=3, fig.width=4.5}
@@ -220,7 +322,7 @@ score_plt <- get_allfscores(model = model, meta = all_meta) %>%
   theme_classic() +
   theme(axis.text = element_text(size =12),
         axis.title = element_text(size =12)) +
-  scale_color_manual(values = c("lightblue", "darkgreen", "darkblue", "pink", "darkred"))
+  scale_color_manual(values = c("lightblue", "#3CB371", "#4169E1", "pink", "#FF6666"))
 
 plot(score_plt)
 
@@ -276,9 +378,9 @@ row_anns <- rbind(get_factors(model,
 row_ha <- rowAnnotation(patient_group = row_anns$disease,
                        study = row_anns$group,
                        col = list(patient_group = c("ARVC" = "lightblue",
-                                                    "NF" = "darkred", 
-                                                    "HCM" = "darkblue",
-                                                    "DCM"= "darkgreen",
+                                                    "NF" = "#FF6666", 
+                                                    "HCM" = "#4169E1",
+                                                    "DCM"= "#3CB371",
                                                     "NCC" = "pink"),
                                   study = c("Chaffin2022" = "black",
                                             "Reichart2022" = "darkgrey")),
@@ -327,7 +429,7 @@ scores_hmap <- Heatmap(rbind(get_factors(model,
 scores_hmap
 
 
-pdf("./results/META/MOFA_mcell/MOFAcell_summ.pdf", height = 5, width = 3.7)
+pdf("./results/META/MOFA_mcell/MOFAcell_summ.pdf", height = 9, width = 4.5)
 
 draw(scores_hmap)
 
@@ -354,7 +456,7 @@ model@cache$variance_explained$r2_total$Reichart2022 %>% mean()
 ### Factors associated with patient group
 ```{r}
 useful_factors <- expl_var_pgroup %>%
-  dplyr::filter(adj_pvalue < 0.15) %>%
+  dplyr::filter(adj_pvalue < 0.05) %>%
   pull(Factor)
 
 print(useful_factors)

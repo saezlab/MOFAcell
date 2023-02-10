@@ -344,7 +344,7 @@ associated_disease <- get_allfscores(model = model, meta = meta) %>%
                              tip.length = 0.01,size = 3.3) +
   theme_classic() +
   xlab("") +
-  scale_color_manual(values = set_names(c("darkred", "darkgreen", "darkblue"), 
+  scale_color_manual(values = set_names(c("#FF6666", "#3CB371", "#4169E1"), 
                                         c("myogenic","ischemic", "fibrotic"))) +
   theme(axis.text.x = element_text(size =12, angle = 90, hjust = 1, vjust = 0.5),
         axis.text.y = element_text(size =12),
@@ -372,7 +372,7 @@ get_allfscores(model = model, meta = meta) %>%
   geom_point(size = 2) +
   theme_classic() +
   xlab("") +
-  scale_color_manual(values = set_names(c("darkred", "darkgreen", "darkblue"), 
+  scale_color_manual(values = set_names(c("#FF6666", "#3CB371", "#4169E1"), 
                                         c("myogenic","ischemic", "fibrotic"))) +
   theme(axis.text.x = element_text(size =12, angle = 90, hjust = 1, vjust = 0.5),
         axis.text.y = element_text(size =12),
@@ -444,9 +444,9 @@ row_anns <- get_factors(model, factors = "all")[[1]] %>%
   
 row_ha <- rowAnnotation(condition = row_anns$patient_group,
                        batch = row_anns$batch,
-                       col = list(condition = c("fibrotic" = "darkblue",
-                                                    "myogenic" = "darkred", 
-                                                    "ischemic" = "darkgreen"),
+                       col = list(condition = c("fibrotic" = "#4169E1",
+                                                    "myogenic" = "#FF6666", 
+                                                    "ischemic" = "#3CB371"),
                                   batch = c("A" = "black",
                                             "B" = "darkgrey")),
                        gap = unit(2.5, "mm"),
@@ -512,7 +512,7 @@ umap_plt <- ggplot(factors_umap, aes(x = UMAP_1,
   geom_point(size = 2.5) +
   theme_classic() +
   theme(axis.text = element_text(size =12)) +
-  scale_color_manual(values = c("darkred", "darkblue", "darkgreen"))
+  scale_color_manual(values = c("#FF6666", "#4169E1", "#3CB371"))
 
 plot(umap_plt)
 
@@ -542,7 +542,7 @@ mds_plt <- ggplot(factors_mds, aes(x = MDS1,
   geom_point(size = 2.5) +
   theme_classic() +
   theme(axis.text = element_text(size =12)) +
-  scale_color_manual(values = c("darkred", "darkblue", "darkgreen"))
+  scale_color_manual(values = c("#FF6666", "#4169E1", "#3CB371"))
 
 plot(mds_plt)
 

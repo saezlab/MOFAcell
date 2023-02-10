@@ -92,17 +92,6 @@ Generate a list of HVGs from another study
 
 ```{r}
 broad_data <- readRDS("./data_HCMDCM_Nature/pb_red.rds")
-
-broad_gsets <- broad_data %>%
-  dplyr::mutate(gene = strsplit(feature, "_") %>%
-                  map_chr(., ~.x %>% last())) %>%
-  dplyr::select(view, gene) %>%
-  unique() %>%
-  group_by(view) %>%
-  nest() %>%
-  deframe() %>%
-  map(., ~.x[[1]])
-
 ```
 
 Defining background genes
@@ -143,11 +132,14 @@ pb_dat <- create_init_exp(counts = counts,
                   min.prop = 0.85) %>%
   tmm_trns(pb_dat_list = .) %>%
   filt_gex_byhvg(pb_dat_list = .,
-                 prior_hvg = broad_gsets,
-                 var.threshold = NULL) %>%
+                 prior_hvg = NULL,
+                 var.threshold = 0) %>%
   filt_gex_bybckgrnd(pb_dat_list = ., 
                      prior_mrks = mrkr_genes) %>%
   pb_dat2MOFA(pb_dat_list = .)
+
+pb_dat <- broad_data %>%
+  dplyr::filter(feature %in% broad_data$feature)
 
 saveRDS(pb_dat, "./data_DCMACM_Science/pb_red_wprior.rds")
 ```

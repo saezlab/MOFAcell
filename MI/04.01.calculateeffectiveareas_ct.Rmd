@@ -132,7 +132,10 @@ area_summ <- map(samples, process_modules, sd_thrsh = 2, msk_thrsh = 0.1) %>%
   tidyr::complete(sample_id, name, fill = list("area" = 0,
                                                "w_area" = 0,
                                                "mean_module" = 0)) %>%
-  left_join(meta, by = "sample_id")
+  left_join(meta, by = "sample_id") %>%
+  dplyr::mutate(name = ifelse(grepl("_neg", name), 
+                              gsub("_neg", "_healthy", name),
+                              gsub("_pos", "_disease", name)))
 
 write.csv(area_summ, "./results/MI/MOFA_mcell/factor_desc/Factor1_char/spatial_summ.csv")
 ```
@@ -140,12 +143,12 @@ write.csv(area_summ, "./results/MI/MOFA_mcell/factor_desc/Factor1_char/spatial_s
 ## Areas with "cell-type" program
 
 ```{r}
-stat.test = area_summ %>%
+stat.test <- area_summ %>%
   ggpubr::compare_means(formula = area ~ patient_group_name, 
                         group.by = "name")
 
 stat.test %>%
-  dplyr::filter(p.adj < 0.05)
+  dplyr::filter(p.adj <= 0.1)
 ```
 
 ```{r, fig.width=5, height = 9}
@@ -201,19 +204,133 @@ dev.off()
 ```{r}
 stat.test = area_summ %>%
   ggpubr::compare_means(formula = w_area ~ patient_group_name, 
-                        group.by = "name")
+                        group.by = "name", method = "t.test")
 
 stat.test %>%
   dplyr::filter(p.adj < 0.05)
 ```
 
+```{r, fig.width=5, height = 9}
+plt_sum <- area_summ %>%
+  ggplot(aes(x = patient_group_name, y = mean_module)) +
+  geom_boxplot() +
+  theme_classic() +
+  facet_wrap( ~ name, ncol = 4, scales = "free") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) 
+
+plot(plt_sum)
+
+pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/area_wmoduleexpr_spatial.pdf", height = 6.5, width = 4.5)
+
+plot(plt_sum)
+
+dev.off()
+
+
+```
+
+
 
 ```{r, fig.width=5, height = 7}
 max_val <- max(area_summ$w_area) + 0.05
 
-area_summ %>%
-  ggplot(aes(x = patient_group_name, y = w_area)) +
+disease_area <- area_summ %>%
+  dplyr::mutate(ct = strsplit(name, "_") %>%
+                  map_chr(., ~.x[[1]]),
+                direction = strsplit(name, "_") %>%
+                  map_chr(., ~.x[[2]])) %>%
+  dplyr::filter(direction == "disease") %>%
+  dplyr::filter(ct %in% c("CM","Fib","Endo","Myeloid")) %>%
+  ggplot(aes(x = patient_group_name, y = w_area, color = patient_group_name)) +
   geom_boxplot() +
-  facet_wrap( ~ name, ncol = 4,scales = "free_y") +
-  theme(axis.text.x = element_text(angle = 90, hjust =1, vjust = 0.5))
+  geom_point(alpha = 0.7) +
+  facet_grid(ct ~ direction, scales = "free_y") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(size= 11, angle = 90, hjust =1, vjust = 0.5)) +
+  theme(axis.text.y = element_text(size = 11)) +
+  theme(panel.spacing = unit(2, "lines")) +
+  ylab("Weighted activation area") +
+  xlab("")
+
+
+pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/relative_area_disease.pdf", height = 6, width = 1.5)
+
+plot(disease_area)
+
+dev.off()
 ```
+
+```{r}
+max_val <- max(area_summ$w_area) + 0.05
+
+healthy_area <- area_summ %>%
+  dplyr::mutate(ct = strsplit(name, "_") %>%
+                  map_chr(., ~.x[[1]]),
+                direction = strsplit(name, "_") %>%
+                  map_chr(., ~.x[[2]])) %>%
+  dplyr::filter(direction == "healthy") %>%
+  dplyr::filter(ct %in% c("CM","Fib","Endo","Myeloid")) %>%
+  ggplot(aes(x = patient_group_name, y = w_area, color = patient_group_name)) +
+  geom_boxplot() +
+  geom_point(alpha = 0.7) +
+  facet_grid(ct ~ direction, scales = "free_y") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(size= 11, angle = 90, hjust =1, vjust = 0.5)) +
+  theme(axis.text.y = element_text(size = 11)) +
+  theme(panel.spacing = unit(2, "lines")) +
+  ylab("Weighted activation area") +
+  xlab("")
+
+
+pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/relative_area_healthy.pdf", height = 6, width = 1.5)
+
+plot(healthy_area)
+
+dev.off()
+```
+
+```{r}
+pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/relative_area_all.pdf", height = 6, width = 6)
+plot(cowplot::plot_grid(disease_area, healthy_area, ncol = 2, align = "hv"))
+dev.off()
+
+```
+
+
+# Selecting contrasting results
+
+```{r}
+area_summ %>%
+  dplyr::mutate(ct = strsplit(name, "_") %>%
+                  map_chr(., ~.x[[1]]),
+                direction = strsplit(name, "_") %>%
+                  map_chr(., ~.x[[2]])) %>%
+  dplyr::filter(direction == "disease") %>%
+  dplyr::filter(ct %in% c("CM","Fib","Endo","Myeloid")) %>%
+  group_by(ct) %>%
+  dplyr::mutate(rank_expr = rank(w_area)) %>%
+  group_by(sample_id, patient_group_name) %>%
+  dplyr::summarise(gen_rank = mean(rank_expr)) %>%
+  arrange(patient_group_name, gen_rank) %>%
+  group_by(patient_group_name) %>%
+  dplyr::slice(1:2)
+```
+
+```{r}
+area_summ %>%
+  dplyr::mutate(ct = strsplit(name, "_") %>%
+                  map_chr(., ~.x[[1]]),
+                direction = strsplit(name, "_") %>%
+                  map_chr(., ~.x[[2]])) %>%
+  dplyr::filter(direction == "disease") %>%
+  dplyr::filter(ct %in% c("CM","Fib","Endo","Myeloid")) %>%
+  group_by(ct) %>%
+  dplyr::mutate(rank_expr = rank(w_area)) %>%
+  group_by(sample_id, patient_group_name) %>%
+  dplyr::summarise(gen_rank = mean(rank_expr)) %>%
+  arrange(patient_group_name, desc(gen_rank)) %>%
+  group_by(patient_group_name) %>%
+  dplyr::slice(1:2)
+```
+
+

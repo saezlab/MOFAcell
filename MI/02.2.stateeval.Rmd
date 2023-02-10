@@ -29,11 +29,6 @@ cond_pb <- readRDS("./data_MI/mi_pb_red.rds") %>%
                   map_chr(., ~.x[[2]]))
 ```
 
-```{r}
-annotation_names <- tibble(patient_group = c("group_1", "group_2", "group_3"),
-                           patient_group_name = c("myogenic", "ischemic", "fibrotic"))
-
-```
 
 ```{r}
 annotation_names <- tibble(patient_group = c("group_1", 
@@ -145,8 +140,6 @@ clean_loads <- function(loadings, sep = "_") {
 
 ```
 
-
-
 ```{r}
 loadings <- read_csv("./results/MI/MOFA_mcell/factor_desc/Factor1_char/loadings.csv",
                      show_col_types = F) %>%
@@ -155,196 +148,6 @@ loadings <- read_csv("./results/MI/MOFA_mcell/factor_desc/Factor1_char/loadings.
                 "feature" = "gene")
 
 head(loadings)
-```
-
-# First enrich cell-state markers into the loading matrix
-
-```{r}
-GSE_analysis = function(geneList,Annotation_DB){
-  
-  geneList = geneList[geneList %in% unique(unlist(Annotation_DB))]
-  
-  ResultsDF = matrix(0,nrow = length(Annotation_DB),ncol = 5)
-  rownames(ResultsDF) = names(Annotation_DB)
-  colnames(ResultsDF) = c("GenesInPathway","GenesInList","GeneNames","p_value","corr_p_value")
-  
-  DB_genecontent = length(unique(unlist(Annotation_DB)))
-  GenesDB = DB_genecontent 
-  SelectedGenes = length(geneList)
-  
-  for(gset in rownames(ResultsDF)){
-    GP = length(Annotation_DB[[gset]])
-    GL = length(intersect(Annotation_DB[[gset]],geneList))
-    
-    ResultsDF[gset,"GenesInList"] = GL
-    ResultsDF[gset,"GenesInPathway"] = GP
-    ResultsDF[gset,"GeneNames"] = paste(intersect(Annotation_DB[[gset]],geneList),collapse = ",")
-    ResultsDF[gset,"p_value"] = phyper(q=GL - 1, m=GP, n=GenesDB-GP, k=SelectedGenes, lower.tail = FALSE, log.p = FALSE)
-  }
-  
-  ResultsDF[,"corr_p_value"] = p.adjust(ResultsDF[,"p_value"],method = "BH")
-  ResultsDF = data.frame(ResultsDF,stringsAsFactors = F)
-  ResultsDF = ResultsDF[order(ResultsDF[,"p_value"]),]
-  
-  ResultsDF = ResultsDF %>% 
-    rownames_to_column("gset") %>% 
-    mutate_at(c("GenesInPathway","GenesInList",
-                "p_value","corr_p_value"), 
-              as.numeric) %>% 
-    dplyr::arrange(corr_p_value,GenesInList)
-  
-  return(ResultsDF)
-}
-```
-
-```{r}
-# State markers from the Kuppe et. al. paper
-
-state_mrkrs <- readRDS(file = "./data_MI/state_genesets_list.rds")
-
-state_mrkrs <- read_csv("./data_MI/cell_states_mrkrs_ttest.csv", show_col_types = F) %>%
-  dplyr::filter(pvals_adj < 0.05, logfoldchanges >= 0.5) %>%
-  dplyr::mutate(cs_name = paste0(ct, "_", group)) %>%
-  dplyr::select(cs_name, names) %>%
-  group_by(cs_name) %>%
-  nest() %>%
-  dplyr::mutate(data = map(data, ~.x[[1]])) %>%
-  deframe()
-
-enrichment_per_ct <- set_names(cts) %>%
-  map(., function(ct) {
-    
-    useful_states <- grepl(ct, names(state_mrkrs))
-    useful_states <- state_mrkrs[useful_states]
-    
-    enrichment <- dplyr::filter(loadings, view == ct) %>%
-      group_by(view,class) %>%
-      nest() %>%
-      dplyr::mutate(data = map(data, ~.x[[1]])) %>%
-      dplyr::mutate(enrichment = map(data, GSE_analysis, Annotation_DB = useful_states)) %>%
-      dplyr::select(view,class, enrichment) %>%
-      unnest(cols = c(enrichment)) %>%
-      dplyr::select(view, class, gset, corr_p_value)
-    
-    return(enrichment)
-  })
-
-plt_per_ct <- map(enrichment_per_ct, function(dat) {
-  
-  df_plt <- dat %>%
-    dplyr::mutate(class = ifelse(class == "neg", "healthy", "disease") %>%
-                    factor(., levels = c("healthy", "disease"))) %>%
-    dplyr::mutate(MOFA_loading = paste0(view,"_",class),
-                  logpval = -log10(corr_p_value)) %>%
-    dplyr::rename("state" = gset)
-  
-  
-  enrich_plt <- ggplot(df_plt, aes(y = state, x = MOFA_loading, size = logpval)) +
-    geom_point() +
-    theme_minimal() +
-    theme(axis.text.x = element_text(size = 11, angle = 90, hjust = 0, vjust = 0.5),
-          axis.text.y = element_text(size = 11)) +
-    ggtitle("enrichment") +
-    coord_equal()
-  
-  return(enrich_plt)
-  
-})
-
-```
-
-# Plots for supplement
-
-```{r, fig.height=3, fig.width= 5}
-pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/state_relationship.pdf", height = 2.5, width = 4.5)
-walk(plt_per_ct, plot)
-dev.off()
-```
-
-# Plots for main
-
-We will pick the most significant states per direction
-
-```{r}
-healthy_sets <- map(enrichment_per_ct, function(ct_dat) {
-  ct_dat %>%
-    filter(corr_p_value == min(corr_p_value),
-           class == "neg") %>%
-    pull(gset)
-})
-
-disease_sets <- map(enrichment_per_ct, function(ct_dat) {
-  ct_dat %>%
-    filter(corr_p_value == min(corr_p_value),
-           class == "pos") %>%
-    pull(gset)
-})
-```
-
-Here we make the joint barplots to show how state enrichment and median compositions align
-
-```{r}
-state_plt_main <- function(ct, state_sets, color_fill) {
-  
-  enrich_dat <- enrichment_per_ct[[ct]] %>%
-      dplyr::filter(gset %in% state_sets[[ct]]) %>%
-    dplyr::mutate(class = ifelse(class == "neg", "healthy", "disease") %>%
-                    factor(., levels = c("healthy", "disease"))) %>%
-    dplyr::mutate(MOFA_loading = paste0(view,"_",class),
-                  logpval = -log10(corr_p_value))
-    
-    enrich_bar <- ggplot(enrich_dat, aes(x = class, y = logpval)) +
-      geom_bar(stat = "identity", fill = color_fill) +
-      theme_classic() +
-      theme(axis.text = element_text(size = 10),
-            axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
-            axis.title = element_text(size = 10),
-            plot.title = element_text(size = 8, face = "bold")) +
-      ylab("-log10(pval)") +
-      xlab("MOFA loading") +
-      ggtitle(gsub(paste0("^", ct, "_"), "", state_sets[[ct]]))
-
-    props_dat <- state_coldata %>%
-      dplyr::filter(cell_type == ct,
-                    cell_state == gsub(paste0("^", ct, "_"), "", state_sets[[ct]])) %>%
-      group_by(patient_group, cell_state) %>%
-      dplyr::summarise(med_prop = median(cell_props))
-    
-    comp_bar <- ggplot(props_dat, aes(x = patient_group, y = med_prop)) +
-      geom_bar(stat = "identity", fill = color_fill) +
-      theme_classic() +
-      theme(axis.text = element_text(size = 10),
-            axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
-            axis.title = element_text(size = 10),
-            plot.title = element_text(size = 8, face = "bold")) +
-      ylab("Group median prop.") +
-      xlab("Patient group") +
-      ggtitle(gsub(paste0("^", ct, "_"), "", state_sets[[ct]]))
-    
-    all_plts <- cowplot::plot_grid(enrich_bar, comp_bar, align = "hv", ncol = 2,rel_widths = c(0.8, 1))
-    
-    return(all_plts)
-
-}
-```
-
-```{r}
-healthy_plts <- set_names(cts) %>%
-  map(., state_plt_main, state_sets = healthy_sets, color_fill = "darkblue")
-
-pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/healthy_states.pdf", height = 4, width = 5)
-plot(cowplot::plot_grid(plotlist = healthy_plts, ncol = 2, nrow = 2, align = "hv"))
-dev.off()
-```
-
-
-```{r}
-disease_plts <- set_names(cts) %>%
-  map(., state_plt_main, state_sets = disease_sets, color_fill = "darkred")
-
-pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/disease_states.pdf", height = 4, width = 5)
-cowplot::plot_grid(plotlist = disease_plts, ncol = 2, nrow = 2, align = "hv")
-dev.off()
 ```
 
 # Run state evaluation
@@ -437,7 +240,7 @@ estimate_statevsglobal = function(state_pb,
 plot_eta <- function(eta_sum, 
                     cond_label = "patient_group",
                     state_label = "cell_state",
-                    p_thrsh = 0.01) {
+                    p_thrsh = 0.05) {
   
   pval_cond <- paste0(cond_label, "_", "pval")
   pval_state <- paste0(state_label, "_", "pval")
@@ -469,7 +272,8 @@ plot_eta <- function(eta_sum,
     ylim(c(0,1)) +
     theme(axis.text = element_text(size =12),
           axis.title = element_text(size =12),
-          legend.text=element_text(size=10))
+          legend.text=element_text(size=10)) +
+    scale_color_manual(values = c("black", "#87CEEB" , "#F5DEB3" ,"#FFB6C1"))
   
   return(eta_plt)
   
@@ -486,16 +290,16 @@ CM_eta <- estimate_statevsglobal(state_pb = state_pb,
                        state_label = "cell_state") %>%
   mutate(ct = "CM") 
 
-eta_plt <- CM_eta %>%
+CM_eta_plt <- CM_eta %>%
   plot_eta() +
   ylab("expl. variance by cell state") +
   xlab("expl. variance by condition") +
-  guides(colour = guide_legend(override.aes = list(size=3)))
+  theme(legend.position = "none")
 
 
 pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/CM_eta_plt.pdf", height = 3.5, width = 4.7)
 
-plot(eta_plt)
+plot(CM_eta_plt)
 
 dev.off()
 
@@ -510,9 +314,18 @@ Fib_eta <- estimate_statevsglobal(state_pb = state_pb,
                        state_label = "cell_state") %>%
   mutate(ct = "Fib") 
 
-Fib_eta %>%
-  plot_eta() %>%
-  plot()
+Fib_eta_plt <- Fib_eta %>%
+  plot_eta() +
+  ylab("expl. variance by cell state") +
+  xlab("expl. variance by condition") +
+  theme(legend.position = "none")
+
+pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/Fib_eta_plt.pdf", height = 3.5, width = 4.7)
+
+plot(Fib_eta_plt)
+
+dev.off()
+
 ```
 
 ```{r}
@@ -523,9 +336,17 @@ Endo_eta <- estimate_statevsglobal(state_pb = state_pb,
                        state_label = "cell_state") %>%
   mutate(ct = "Endo") 
 
-Endo_eta %>%
-  plot_eta() %>%
-  plot()
+Endo_eta_plt <- Endo_eta %>%
+  plot_eta() +
+  ylab("expl. variance by cell state") +
+  xlab("expl. variance by condition") +
+  theme(legend.position = "none")
+
+pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/Endo_eta_plt.pdf", height = 3.5, width = 4.7)
+
+plot(Endo_eta_plt)
+
+dev.off()
 ```
 
 ```{r}
@@ -536,10 +357,40 @@ Myeloid_eta <- estimate_statevsglobal(state_pb = state_pb,
                        state_label = "cell_state") %>%
   mutate(ct = "Myeloid") 
 
-Myeloid_eta %>%
-  plot_eta() %>%
-  plot()
+Myeloid_eta_plt <- Myeloid_eta %>%
+  plot_eta() +
+  ylab("expl. variance by cell state") +
+  xlab("expl. variance by condition") +
+  guides(colour = guide_legend(override.aes = list(size=3)))
+
+pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/Myeloid_eta_plt.pdf", height = 3.5, width = 4.7)
+
+plot(Myeloid_eta_plt)
+
+dev.off()
 ```
+
+```{r}
+
+first_column <- cowplot::plot_grid(CM_eta_plt, Fib_eta_plt, ncol = 1, align = "hv")
+second_column <- cowplot::plot_grid(cowplot::plot_grid(Endo_eta_plt, 
+                                                       Myeloid_eta_plt + 
+                                        theme(legend.position = "none"), 
+                                                       ncol = 1, 
+                                                       align = "hv"),
+                                    cowplot::plot_grid(ggplot() + theme_minimal(), 
+                                                       get_legend(Myeloid_eta_plt), 
+                                                       ncol = 1, 
+                                                       align = "hv"))
+
+pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/all_eta_plt.pdf", height = 5, width = 9)
+
+plot(cowplot::plot_grid(first_column, 
+                        second_column, ncol = 2, rel_widths = c(1,2)))
+
+dev.off()
+```
+
 
 # Global responses across cell types
 
@@ -558,7 +409,7 @@ global_ratio_plt <- bind_rows(CM_eta, Fib_eta,
 
 plot(global_ratio_plt)
 
-pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/eta_ratio_plt.pdf", height = 3.5, width = 3.5)
+pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/eta_ratio_plt.pdf", height = 2.5, width = 2.5)
 
 plot(global_ratio_plt)
 
@@ -566,82 +417,125 @@ dev.off()
 
 ```
 
+```{r}
+ bind_rows(CM_eta, Fib_eta, 
+          Endo_eta, Myeloid_eta) %>%
+  group_by(ct) %>%
+  nest() %>%
+  dplyr::mutate(t_res = map(data, function(dat) {
+    
+    test_dat <- dplyr::filter(dat,
+                              !is.infinite(global_ratio))
+    
+    t.test(test_dat$global_ratio, mu = 0, alternative = "greater") %>%
+      broom::tidy()
+  })) %>%
+  dplyr::select(ct, t_res) %>%
+  unnest() %>%
+  dplyr::select(ct, p.value) %>%
+  ungroup() %>%
+  mutate(adj_p = p.adjust(p.value))
+```
+
 # Examples of genes 
 
-# NFATC4
-
 ```{r}
-CM_eta %>%
-  dplyr::filter(feature == "NFATC4")
-```
-
-
-```{r}
-state_ex_plt <- state_pb %>%
-  dplyr::filter(view == "CM",
-                feature == "NFATC4") %>%
+plot_complexreg <- function(ct, gene) {
+  
+  state_ex_plt <- state_pb %>%
+  dplyr::filter(view == ct,
+                feature == gene) %>%
   ggplot(aes(x = cell_state, y = value)) +
   geom_boxplot() +
   geom_point() +
   theme_minimal() +
   ylab("expression") +
   xlab("") +
-  theme(axis.text.x = element_text(angle = 90, size = 12, hjust = 1, vjust = 0.5),
-        axis.text.y = element_text(size = 12),
-        axis.title = element_text(size =12))
-
-cond_ex_plt <- state_pb %>%
-  dplyr::filter(view == "CM",
-                feature == "NFATC4") %>%
-  left_join(annotation_names) %>%
-  ggplot(aes(x = patient_group_name, y = value)) +
+  theme(axis.text.x = element_text(angle = 90, size = 10, hjust = 1, vjust = 0.5),
+        axis.text.y = element_text(size = 10),
+        axis.title = element_text(size = 10))
+  
+  cond_ex_plt <- state_pb %>%
+  dplyr::filter(view == ct,
+                feature == gene) %>%
+  ggplot(aes(x = patient_group, y = value)) +
   geom_boxplot() +
   geom_point() +
   theme_minimal() +
   ylab("expression") +
   xlab("") +
-  theme(axis.text.x = element_text(angle = 90, size = 12, hjust = 1, vjust = 0.5),
-        axis.text.y = element_text(size = 12),
-        axis.title = element_text(size =12))
+  theme(axis.text.x = element_text(angle = 90, size = 10, hjust = 1, vjust = 0.5),
+        axis.text.y = element_text(size = 10),
+        axis.title = element_text(size = 10))
+  
+  distilled_plt <- state_pb %>%
+  dplyr::filter(view == ct,
+                feature == gene) %>%
+  ggplot(aes(x = cell_state, 
+             y = value, 
+             color = patient_group)) +
+  geom_boxplot() +
+  theme_minimal() +
+  ylab("expression") +
+  xlab("") +
+  theme(axis.text.x = element_text(angle = 90, size = 10, hjust = 1, vjust = 0.5),
+        axis.text.y = element_text(size = 10),
+        axis.title = element_text(size = 11)) +
+  scale_color_manual(values = c("#FF6666", "#4169E1", "#3CB371"))
+  
+  all_plt <- cowplot::plot_grid(cond_ex_plt, state_ex_plt, distilled_plt, align = "h", ncol = 3,rel_widths = c(0.75, 0.9, 1.5))
+  
+  all_plt_red <- cowplot::plot_grid(cond_ex_plt, distilled_plt, align = "h", ncol = 2,rel_widths = c(0.75, 1.5))
 
-expression_plt <- cowplot::plot_grid(cond_ex_plt, state_ex_plt, align = "hv", ncol = 2,rel_widths = c(0.75,1))
+  
+  return(all_plt_red)
+}
+```
 
-pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/CM_NFATC4_example.pdf", height = 3.5, width = 3.5)
+# CM
 
-plot(expression_plt)
+```{r}
+cm_example <- plot_complexreg(ct = "CM",
+                gene = "GUCY2C")
+
+cm_example
+```
+
+# Fib
+
+```{r}
+fib_example <- plot_complexreg(ct = "Fib",
+                gene = "HIF1A")
+
+fib_example
+```
+
+# Endo
+
+```{r}
+endo_example <- plot_complexreg(ct = "Endo",
+                gene = "CCAR1")
+
+endo_example
+```
+
+# Myeloid
+
+```{r}
+myeloid_example <- plot_complexreg(ct = "Myeloid",
+                gene = "MARCH1")
+
+myeloid_example
+```
+
+```{r}
+pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/global_response_examples.pdf", height = 10, width = 4)
+
+plot(cowplot::plot_grid(cm_example, fib_example, 
+                   endo_example, myeloid_example, 
+                   ncol = 1, align = "hv", 
+                   rel_heights = c(1,0.9,1,1.35)))
 
 dev.off()
-
 ```
-
-# MYH7
-
-```{r}
-CM_eta %>%
-  dplyr::filter(feature == "MYH7")
-```
-
-```{r}
-state_pb %>%
-  dplyr::filter(view == "CM",
-                feature == "MYH7") %>%
-  ggplot(aes(x = cell_state, y = value)) +
-  geom_boxplot() +
-  geom_point() +
-  theme(axis.text.x = element_text(angle = 90, size = 12, hjust = 1, vjust = 0.5),
-        axis.text.y = element_text(size = 12))
-
-state_pb %>%
-  dplyr::filter(view == "CM",
-                feature == "MYH7") %>%
-  left_join(annotation_names) %>%
-  ggplot(aes(x = patient_group_name, y = value)) +
-  geom_boxplot() +
-  geom_point() +
-  theme(axis.text.x = element_text(angle = 90, size = 12, hjust = 1, vjust = 0.5),
-        axis.text.y = element_text(size = 12))
-```
-
-
-
 

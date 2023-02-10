@@ -10,17 +10,27 @@ editor_options:
 ```{r setup, include=FALSE}
 library(tidyverse)
 library(compositions)
+library(ComplexHeatmap)
+library(cowplot)
+library(cluster)
+```
+
+```{r}
+ct_codes <- c("CM", "Endo", "Fib", "Lymphoid", "Myeloid", "PC", "vSMCs")
+ct_names <- c("Ventricular_Cardiomyocyte", "Endothelial", "Fibroblast", "Lymphoid", "Myeloid", "Pericytes", "Smooth_muscle_cells")
+
+ct_dict <- tibble(ct_codes, ct_names)
 ```
 
 ## Bisque estimated cell proportions using the HCA
 
 ```{r}
-reheat_comps <- readRDS("./data_reheat/hca_vis_deconresults_bulknormed.rds")
+reheat_comps <- readRDS("./data_reheat/hca_reheat_scdc_mod.rds")
 # Fixing bad naming
 study_names <- names(reheat_comps)
 study_names[study_names == "Spurell19"] <- "Spurrell19"
 names(reheat_comps) <- study_names
-reheat_comps <- map(reheat_comps, ~.x[["CPM"]] %>% t())
+reheat_comps <- map(reheat_comps, ~.x[["SCDC"]] %>% t())
 reheat_comps <- map(reheat_comps, ~ compositions::clr(.x))
 ```
 
@@ -35,7 +45,7 @@ for(study in studies) {
   reheat[[study]][["clr_comps"]] <- reheat_comps[[study]] %>%
     as.data.frame() %>%
     rownames_to_column("Sample") %>%
-    tidyr::pivot_longer(-Sample, names_to = "ct", values_to = "comps") %>%
+    tidyr::pivot_longer(-Sample, names_to = "ct_names", values_to = "comps") %>%
     left_join(reheat[[study]]$TARGETS %>%
                 dplyr::select(Sample, HeartFailure), 
               by = "Sample")
@@ -43,13 +53,72 @@ for(study in studies) {
 
 ```
 
-
 ```{r}
 reheat_comps <- map(reheat, ~.x[["clr_comps"]]) %>%
   enframe() %>%
-  unnest() %>%
-  na.omit()
+  unnest(value) %>%
+  na.omit() %>%
+  left_join(ct_dict, by = "ct_names") %>%
+  dplyr::select(-ct_names) %>%
+  dplyr::rename("ct" = "ct_codes") %>%
+  dplyr::mutate("sample" = paste0(name, "_", Sample))
+```
 
+## Here we make the heatmap similar to the one we did for MOFAcell scores
+
+```{r}
+anns_hmap <- reheat_comps %>%
+  dplyr::select(sample, HeartFailure) %>%
+  unique() %>%
+  column_to_rownames("sample") 
+
+# Scaling across samples
+
+data_hmap <- reheat_comps %>%
+  dplyr::select(sample, ct, comps) %>%
+  pivot_wider(names_from = ct, values_from = comps) %>%
+  column_to_rownames("sample") %>%
+  as.matrix() %>%
+  scale()
+
+
+saveRDS(data_hmap, "./results/META/clr_comps_mat.rds")
+```
+
+
+```{r}
+ht_opt$ROW_ANNO_PADDING <- unit(2.5, "mm")
+ht_opt$COLUMN_ANNO_PADDING <- unit(2.5, "mm")
+
+# Association colors
+
+col_fun_scores <- circlize::colorRamp2(seq(-5, 5, length = 50), hcl.colors(50,"Vik",rev = T))
+
+row_ha <- rowAnnotation(HF = anns_hmap[rownames(data_hmap),"HeartFailure"],
+                       col = list(HF = c("no" = "grey",
+                                         "yes"= "black")),
+                       gap = unit(2.5, "mm"),
+                       border = TRUE)
+
+scores_hmap <- Heatmap(data_hmap[,sort(colnames(data_hmap))], 
+        name = "cell type \nscaled \ncomps", 
+        right_annotation = row_ha,
+        cluster_columns = FALSE, 
+        show_row_dend = FALSE,
+        show_column_dend = FALSE,
+        show_row_names = FALSE,
+        border = TRUE,
+        gap = unit(2.5, "mm"),
+        col = col_fun_scores)
+
+pdf("./results/META/reheat_rna_ct_comps.pdf", height = 4, width = 2.3)
+
+draw(scores_hmap)
+
+dev.off()
+```
+
+```{r}
 ct_ds <- reheat_comps %>%
   group_by(name, ct) %>%
   dplyr::mutate(HeartFailure = factor(HeartFailure, 
@@ -68,33 +137,134 @@ ct_ds_stat <- ct_ds %>%
   arrange(-statistic) %>%
   group_by(name) %>%
   dplyr::mutate(p_adj = p.adjust(p.value)) %>%
-  dplyr::select(ct, name, statistic, p.value, p_adj) %>%
+  dplyr::select(ct, name, statistic, estimate, p.value, p_adj) %>%
   dplyr::mutate(significance = ifelse(p_adj <= 0.1, "*", ""))
+
+saveRDS(ct_ds_stat, "./results/META/clr_comps_hftest.rds")
+```
+
+## First compare significance
+
+```{r}
+mofacell_deconv_stats <- readRDS("./results/META/mofacell_ds_hftest.rds")
+
+all_stats <- mofacell_deconv_stats %>%
+  dplyr::select(source, name, 
+                statistic, p_adj,
+                significance) %>%
+  dplyr::rename("ds_statistic" = "statistic",
+                "ds_p_adj" = "p_adj",
+                "ds_significance" = "significance",
+                "ct" = "source") %>%
+  left_join(ct_ds_stat %>%
+            dplyr::select(ct, name, 
+                statistic, p_adj,
+                significance), by = c("ct", "name"))
 ```
 
 ```{r}
-reheat_stats_plt <- ggplot(ct_ds_stat, aes(y = name, 
-                       x  = ct, 
+reheat_statscomps_plt <- ggplot(all_stats, aes(x = name, 
+                       y  = ct, 
                        fill = statistic,
                        label = significance)) +
   geom_tile() +
   geom_text() +
-  scale_fill_gradient2() +
+  scale_fill_gradient2(limits = c(-25,6)) +
   theme(axis.text = element_text(size =12),
     axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
   ylab("") +
   xlab("") +
   coord_equal()
 
+reheat_statsds_plt <- ggplot(all_stats, aes(x = name, 
+                       y  = ct, 
+                       fill = ds_statistic,
+                       label = ds_significance)) +
+  geom_tile() +
+  geom_text() +
+  scale_fill_gradient2(limits = c(-25,6)) +
+  theme(axis.text = element_text(size =12),
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  ylab("") +
+  xlab("") +
+  coord_equal()
+
+all_stats_plt <- cowplot::plot_grid(reheat_statsds_plt, reheat_statscomps_plt, ncol = 1, align = "hv")
+all_stats_plt
+
+pdf("./results/META/HF_stat_comp.pdf", height = 6.5, width = 10)
+
+plot(all_stats_plt)
+
+dev.off()
 ```
 
+## Then make the comparison of the sillouhette score
 
+```{r}
+calculate_sw <- function(scores, meta, test_label) {
+  
+  meta_info <- meta %>%
+    dplyr::select_at(c("sample", test_label)) %>%
+    column_to_rownames("sample") %>%
+    dplyr::mutate(label_ix = .data[[test_label]] %>% 
+                    as.factor() %>% 
+                    as.integer())
+  
+  scores <- scores[rownames(meta_info),]
+  
+  patient_dists <- dist(scores,
+                     method = "euclidean")
+  
+  si <- (silhouette(x = meta_info$label_ix, patient_dists)) %>%
+    as.data.frame() %>%
+    dplyr::select(cluster, sil_width) %>%
+    left_join(unique(meta_info), by = c("cluster" = "label_ix"))
 
+  return(si)
+}
 
+# We will only evaluate for samples shared by both datasets
+meta_test <- anns_hmap %>%
+  rownames_to_column("sample")
 
+#Import MOFAcell deconvolution results
+ds_data_hmap <- readRDS("./results/META/ds_mofacell_mat.rds")
 
+# Compare batch clustering
+batch_sw <- bind_rows(calculate_sw(data_hmap, meta_test, "HeartFailure") %>%
+  mutate(method = "SCDC"),
+calculate_sw(ds_data_hmap, meta_test, "HeartFailure") %>%
+  mutate(method = "MOFA"))
 
+batch_sw %>% group_by(HeartFailure) %>%
+  nest() %>%
+  dplyr::mutate(comp_sw = map(data, function(dat) {
+    
+    t.test(sil_width ~ method, dat) %>%
+      broom::tidy() %>%
+      dplyr::select(p.value)
+    
+  })) %>%
+  dplyr::select(HeartFailure, comp_sw) %>%
+  unnest()
 
+batch_sw_plt <- batch_sw %>%
+  dplyr::mutate(HeartFailure = ifelse(HeartFailure == "no", "NF", "HF")) %>%
+  ggplot(.,
+       aes(y = HeartFailure, x = sil_width, color = method)) +
+  geom_boxplot() +
+  theme_minimal() +
+  theme(axis.text.x = element_text(size = 12, hjust = 1, vjust = 0.5),
+        axis.text.y = element_text(size = 12),
+        axis.title = element_text(size = 12)) +
+  theme(plot.margin = unit(c(0.5,0,0,0.5), "cm")) + #
+  scale_color_manual(values = c("black", "grey")) +
+  xlab("silhouette \n width") +
+  ylab("patient group")
 
+pdf("./results/META/comparison_sw_HF.pdf", height = 2, width = 3.8)
+plot(batch_sw_plt)
+dev.off()
 
-
+```
