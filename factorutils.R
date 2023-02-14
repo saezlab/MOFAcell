@@ -32,8 +32,6 @@ get_allfscores <-  function(model, meta, factor, group = FALSE) {
     
     }
   
-  
-  
   return(factor_scores)
   
 }

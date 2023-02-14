@@ -70,8 +70,8 @@ ids <- colData(mi_pb) %>%
   dplyr::select(cell_type, patient_region_id) %>%
   DataFrame()
 
-mi_pb <- scuttle::sumCountsAcrossCells(x = mi_pb, 
-                              ids  = ids)
+mi_pb <- scuttle::sumCountsAcrossCells(x = mi_pb,
+                                       ids  = ids)
 
 assay(mi_pb, "counts") <- assay(mi_pb, "sum")
 ```
@@ -288,6 +288,8 @@ meta <- sample_dict_red %>%
   dplyr::mutate(patient_group = gsub("-enriched", "", patient_group)) %>%
   dplyr::mutate(patient_group = factor(patient_group,
                                        levels = c("myogenic", "fibrotic", "ischemic")))
+
+write_csv(meta, "./data_MI/pb_metadata.csv")
 ```
 
 ### Aesthetics definitions of comparisons

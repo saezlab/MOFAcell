@@ -247,7 +247,9 @@ batch_sw %>% group_by(HeartFailure) %>%
     
   })) %>%
   dplyr::select(HeartFailure, comp_sw) %>%
-  unnest()
+  unnest() %>%
+  ungroup() %>%
+  mutate(p_adj = p.adjust(p.value))
 
 batch_sw_plt <- batch_sw %>%
   dplyr::mutate(HeartFailure = ifelse(HeartFailure == "no", "NF", "HF")) %>%

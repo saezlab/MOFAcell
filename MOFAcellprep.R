@@ -178,9 +178,6 @@ tmm_trns <- function(pb_dat_list, scale_factor = 1000000) {
   pb_dat_red <- map(pb_dat_list, function(x) {
     all_nf <- edgeR::calcNormFactors(x, method = "TMM")
     sfs <- all_nf$samples$lib.size * all_nf$samples$norm.factors
-    #sfs <- c(rep(1,12), rep(2,13))
-    #return(scater::logNormCounts(x, size_factors = sfs))
-    
     pb <- sweep(assay(x, "counts"), MARGIN = 2, sfs, FUN = "/")
     assay(x, "logcounts") <- log1p(pb * scale_factor)
     
