@@ -67,9 +67,9 @@ Column data must contain 3 columns:
 "cell_type" = which will define each view in the MOFA model
 "ncells" = number of cells from which the pseudobulk profile was made
 
-Functions like `scuttle::summarizeAssayByGroup()` already provides this type of information
+Functions like `scuttle::summarizeAssayByGroup()` already provide this type of information
 
-```{r, eval=T, echo=F}
+```{r, eval=T}
 coldata <- colData(pbulk_obj) %>%
   as.data.frame() %>%
   dplyr::rename("donor_id" = "patient_region_id",
@@ -84,7 +84,7 @@ colnames(counts) <- rownames(coldata)
 
 Here we propose a workflow that can be used to process, filter, normalize, and format data ready for a MOFA model for multicellular factor analysis
 
-1. We rely on `SummarizedExperiment` to prepare data for processing
+We rely on `SummarizedExperiment` to prepare data for processing
 
 ```{r}
 # Creates summarized experiment from a count matrix and column annonations
@@ -99,7 +99,7 @@ create_init_exp <- function(counts, coldata) {
 }
 ```
 
-2. For each cell type we keep profiles generated at least from **n** number of cells 
+For each cell type we keep profiles generated at least from **n** number of cells 
 
 ```{r}
 # Filter pseudobulk expression profiles generated with less than n cells
@@ -140,7 +140,7 @@ filt_profiles <- function(pb_dat, ncells = 50, cts) {
 }
 ```
 
-3. For each cell-type (view) we filter lowly expressed genes using `edgeR::filterByExpr()`
+For each cell-type (view) we filter lowly expressed genes using `edgeR::filterByExpr()`
 
 ```{r}
 # Performs filtering of lowly expressed genes
@@ -162,7 +162,7 @@ filt_gex_byexpr <- function(pb_dat_list, min.count, min.prop) {
 }
 ```
 
-4. Normalization of pseudobulk expression profiles using Trimmed Mean of the M-values (TMM) from `edgeR::calcNormFactors`
+Normalization of pseudobulk expression profiles using Trimmed Mean of the M-values (TMM) from `edgeR::calcNormFactors`
 
 ```{r}
 # Performs normalization via TMM
@@ -186,7 +186,7 @@ tmm_trns <- function(pb_dat_list, scale_factor = 1000000) {
 }
 ```
 
-5. Identification of highly variable genes per cell type using `scran::getTopHVGs()`
+Identification of highly variable genes per cell type using `scran::getTopHVGs()`
 
 ```{r}
 # Performs filtering of highly variable genes (after data transformation)
@@ -244,7 +244,7 @@ filt_gex_byhvg <- function(pb_dat_list, prior_hvg = NULL, var.threshold = 1) {
 }
 ```
 
-6. You can also filter the highly variable genes of each cell type, by avoiding genes considered  background
+You can also filter the highly variable genes of each cell type, by avoiding genes considered  background
 
 ```{r}
 # Performs filtering of highly variable genes (after data transformation)
@@ -302,7 +302,7 @@ filt_gex_bybckgrnd <- function(pb_dat_list, prior_mrks) {
 
 ```
 
-7. Finally create a data frame ready to be used in MOFA
+Finally create a data frame ready to be used in MOFA
 
 ```{r}
 # Makes a MOFA ready data set

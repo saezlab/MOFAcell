@@ -65,16 +65,12 @@ composition_diffs <- props_studies %>%
   unnest() %>%
    arrange(ct, group)
 
-
-
 composition_diffs %>%
   dplyr::select(ct, group, typeprop, statistic) %>%
   ggplot(aes(x = ct, y = statistic, color = typeprop)) +
   facet_grid(rows = vars(group)) +
   geom_point() +
   theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
-
-
 ```
 
 
