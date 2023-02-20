@@ -35,13 +35,11 @@ reticulate::use_condaenv(condaenv = "/Users/ricardoramirez/opt/miniconda3/envs/M
 
 MOFA can be used to identify coordinated gene expression programs of multiple cell types from single cell RNA-seq data. Similarly as other computational tools such as scITD (link) or DIALOGUE (link), MOFA factors can be interpreted as shared gene programs between cell types, whose variability is associated to different covariates in complex experimental designs.
 
-In this markdown we will estimate "multicellular factors" from a single-cell RNA-seq dataset of HCM/DCM patients and healthy donors from a study by xxxxxx
+In this markdown we will estimate "multicellular factors" from a single-cell RNA-seq dataset of HCM/DCM patients and healthy donors from a study by Chaffin, et al, 2022.
 
 # Pseudobulk expression profiles and meta-data
 
-In this section we import a SingleCellExperiment containing the profiles of 27 combinations of patient and physiological samples at different time points after myocardial infarction as well as control samples.
-
-These specimens were classified in three major groups based on histological observations, nevertheless these are only approximations of a class
+In this section we import pseudobulk expression profiles and their meta data including patient and cell type of origin.
 
 ```{r}
 # Defining the patient annotations -----------------------------------------------------------------
@@ -68,6 +66,8 @@ meta <- sample_dict_red %>%
 ```
 
 # What happens if we fit a PCA to the compositions?
+
+We do this to have evidence to suggest that plain PCA on pseudobulk is not addecuate since each sample will be affected mainly by the cell compositions
 
 ```{r}
 comp_mat <- coldat %>%
@@ -99,6 +99,8 @@ comps_pca <- comps_pca$x %>%
   left_join(meta, by = "sample")
 ```
 
+Here we fit anovas to composition PCs
+
 ```{r}
 assoc_comps <- function(comps_pca_dat, predicted_label) {
   
@@ -123,6 +125,8 @@ assoc_comps <- function(comps_pca_dat, predicted_label) {
 }
 ```
 
+Testing HF vs NF
+
 ```{r}
 assoc_comps(comps_pca_dat = comps_pca,
             predicted_label = "disease") %>%
@@ -135,6 +139,8 @@ assoc_comps(comps_pca_dat = comps_pca,
   sum
 ```
 
+Testing sex
+
 ```{r}
 assoc_comps(comps_pca_dat = comps_pca,
             predicted_label = "sex") %>%
@@ -146,6 +152,8 @@ assoc_comps(comps_pca_dat = comps_pca,
   dplyr::pull(prop.var) %>%
   sum
 ```
+
+Testing etiology
 
 ```{r}
 assoc_comps(comps_pca_dat = comps_pca %>%
@@ -270,13 +278,7 @@ model <- run_mofa(MOFAobject, outfile)
 
 We will associate clinical covariates to factor scores. For each factor score, we will perform an analysis of variance to clinical covariates of interest. 
 
-In this specific case we will identify which factors associate with the histological description
-
-## Association of factors to covariates
-
-We will associate clinical covariates to factor scores. For each factor score, we will perform an analysis of variance to clinical covariates of interest. 
-
-In this specific case we will identify which factors associate with the histological description
+In this specific case we will identify which factors associate with the disease condition of the patients, their sex or etiology
 
 ```{r}
 get_associated_factors <- function(meta, model, predicted_label) {
@@ -310,6 +312,8 @@ get_associated_factors <- function(meta, model, predicted_label) {
 }
 ```
 
+# Testing HF vs NF
+
 ```{r}
 meta <- sample_dict_red %>%
   dplyr::rename("sample" = "donor_id")
@@ -330,12 +334,16 @@ get_allfscores(model = model, meta = meta) %>%
   theme(axis.text = element_text(size =12))
 ```
 
+# Testing etiologies
+
 ```{r}
 expl_var_hcm <- get_associated_factors(meta = meta %>%
                                             dplyr::filter(disease %in% c("DCM","HCM")),
                                        model = model,predicted_label = "disease")
 expl_var_hcm
 ```
+
+# Testing sex
 
 ```{r}
 expl_var_sex <- get_associated_factors(meta = meta,model = model,predicted_label = "sex")
@@ -354,8 +362,6 @@ get_allfscores(model = model, meta = meta) %>%
   theme_classic() +
   theme(axis.text = element_text(size =12))
 ```
-
-From this analysis we identify Factor 1 to be associated with the histological descriptions.
 
 ## Explained variance per factor and summary heatmap
 
