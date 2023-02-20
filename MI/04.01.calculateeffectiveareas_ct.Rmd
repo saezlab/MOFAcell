@@ -14,6 +14,7 @@ library(tidyverse)
 ## Defining effective areas
 
 We create regions of interest for each cell-type by identifying spots where msk_thrsh is greater than a certain proportion, this ensures that any module score calculated before is reliable
+
 Then from this mask, we calculate potential effective areas and real effective areas with sd_thrsh (since we are doing weighted means)
 
 ```{r}
@@ -295,7 +296,6 @@ plot(cowplot::plot_grid(disease_area, healthy_area, ncol = 2, align = "hv"))
 dev.off()
 
 ```
-
 
 # Selecting contrasting results
 

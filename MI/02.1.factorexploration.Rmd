@@ -89,13 +89,11 @@ read_csv("./results/MI/MOFA_mcell/factor_desc/Factor1_char/model_size.csv") %>%
   median()
 ```
 
-
 ```{r}
 read_csv("./results/MI/MOFA_mcell/factor_desc/Factor1_char/model_size.csv") %>%
   group_by(direction) %>%
   summarize(median_genes = median(used_genes)) 
 ```
-
 
 ```{r}
 loadings <- read_csv("./results/MI/MOFA_mcell/factor_desc/Factor1_char/loadings.csv") %>%

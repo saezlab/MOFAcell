@@ -17,7 +17,7 @@ model <- MOFA2::load_model(model_outfile)
 pb_data <- readRDS("./data_MI/mi_pb_red.rds")
 out_alias <- "./results/MI/MOFA_mcell/factor_desc"
 
-# Meta data
+# Meta data for both models
 
 annotation_names <- tibble(patient_group = c("group_1", 
                                              "group_2", 
@@ -26,9 +26,13 @@ annotation_names <- tibble(patient_group = c("group_1",
                                                   "ischemic", 
                                                   "fibrotic"))
 
+# Batch information of samples
+
 batch_info <- read_csv("./data_MI/snrna_batch_ann.csv") %>%
   select(orig.ident, batch) %>%
   unique()
+
+# Patient info
 
 sample_dict <- read_csv("./data_MI/rna_patient_anns_revisions.csv",show_col_types = F) %>%
   left_join(annotation_names, by = "patient_group") %>%
@@ -47,7 +51,7 @@ sample_dict_red <- sample_dict %>%
 
 meta <- sample_dict_red
 
-# Get factor scorees
+# Get factor scorees from MOFA
 factor_scores <- get_fscores(model = model,
                              meta = meta) %>%
   dplyr::select(-c(major_labl, patient_group, batch)) %>%
@@ -56,7 +60,7 @@ factor_scores <- get_fscores(model = model,
 colnames(factor_scores) <- paste0("MOFA", "_", 
                                         colnames(factor_scores))
 
-# Get loadings
+# Get loadings from MOFA
 factor_loadings <-  get_weights(model, as.data.frame = T) %>%
   as.data.frame() %>%
   dplyr::mutate(feature = strsplit(as.character(feature), "_") %>%
@@ -75,19 +79,18 @@ factor_loadings <-  get_weights(model, as.data.frame = T) %>%
   }))
 
 # scITD -----------------------------------------------------
-
+# Factor scores
 scITD_factor_scores <- read_csv("./results/MI/scITD/factor_scores.csv",
                                 show_col_types = F) %>%
-  #dplyr::select_at(c("sample_id","Factor_2","Factor_3", "Factor_4")) %>%
   column_to_rownames("sample_id") %>%
   as.matrix()
 
 colnames(scITD_factor_scores) <- paste0("scITD", "_", 
                                         colnames(scITD_factor_scores))
 
+# Loadings
 scITD_loadings <- read_csv("./results/MI/scITD/loadings.csv")  %>%
   as.data.frame() %>%
-  #dplyr::filter(name %in% c("Factor_2","Factor_3", "Factor_4")) %>%
   dplyr::group_by(name) %>%
   nest() %>%
   mutate(data = map(data, function(dat) {
@@ -97,8 +100,7 @@ scITD_loadings <- read_csv("./results/MI/scITD/loadings.csv")  %>%
       as.matrix()
   }))
 
-# Added sillouhette width comparison
-
+# Added silhouette width comparison function
 calculate_sw <- function(scores, meta, test_label) {
   
   meta_info <- meta %>%
@@ -121,7 +123,7 @@ calculate_sw <- function(scores, meta, test_label) {
   return(si)
 }
 
-# Compare batch clustering
+# Compare batch clustering using silhouette scores (t-tests)
 
 batch_sw <- bind_rows(calculate_sw(factor_scores,meta = meta, "batch") %>%
   mutate(method = "MOFA"),
@@ -155,8 +157,7 @@ pdf("./results/MI/comparison/sw_batch.pdf", height = 2, width = 3.5)
 plot(batch_sw_plt)
 dev.off()
 
-
-# Compare patient clustering
+# Compare patient clustering using silhouette scores (t-tests)
 
 patient_sw <- bind_rows(calculate_sw(factor_scores,
                                      meta = meta, "patient_group") %>%
@@ -199,86 +200,8 @@ pdf("./results/MI/comparison/sw_patientbatch.pdf", height = 2.5, width = 6.5)
 cowplot::plot_grid(patient_sw_plt, batch_sw_plt, align = "hv", rel_widths = c(0.9,0.75))
 
 dev.off()
-# Comparisons
 
-pat_order <- rownames(scITD_factor_scores)
-
-factor_cor <- cor(factor_scores[pat_order,],
-    scITD_factor_scores[pat_order,], method = "spearman")
-  
-
-pdf(height = 5, width = 5, "./results/MI/comparison/corr_factors.pdf")
-
-corrplot::corrplot(factor_cor, method = "color", 
-                   addCoef.col = 'black', tl.col = 'black')
-
-dev.off()
-
-
-# Comparison of loadings
-
-comp_loadings <- function(MOFA_factor, scITD_factor) {
-  
-  scITDdat <- scITD_loadings %>%
-    dplyr::filter(name == scITD_factor) %>%
-    pull(data)
-  
-  scITDdat <- scITDdat[[1]]
-  
-  colnames(scITDdat) <- paste0("scITD", "_", 
-                               colnames(scITDdat))
-  
-   MOFAdat <- factor_loadings %>%
-    dplyr::filter(factors == MOFA_factor) %>%
-    pull(data)
-   
-   MOFAdat <- MOFAdat[[1]]
-  
-   colnames(MOFAdat) <- paste0("MOFA", "_", 
-                                colnames(MOFAdat))
-   
-   shared_genes <- intersect(rownames(MOFAdat), 
-                             rownames(scITDdat))
-   
-   corres <- cor(MOFAdat[shared_genes, ], 
-              scITDdat[shared_genes,], method = "spearman")
-   
-   return(corres * diag(7))
-  
-
-}
-
-# MOFA 1 vs scITD 1,3,4
-
-comp_loadings("Factor1", "Factor_1") %>%
-  corrplot::corrplot(method = "color", addCoef.col = 'black', tl.col = 'black')
-
-diag(comp_loadings("Factor1", "Factor_1") ) %>% mean()
-diag(comp_loadings("Factor1", "Factor_3") ) %>% mean()
-diag(comp_loadings("Factor1", "Factor_4") ) %>% mean()
-
-
-load_corr <- set_names(diag(comp_loadings("Factor1", "Factor_1")),
-                       rownames(comp_loadings("Factor1", "Factor_1")) 
-                       %>% strsplit(.,"_") 
-                       %>% map_chr(., ~.x %>% last())) %>%
-  enframe() %>%
-  arrange(-value)
-
-pdf(height = 3.5, width = 2.5, "./results/MI/comparison/corr_loadings.pdf")
-
-ggplot(load_corr, aes(x = factor(name,
-                                 levels = .data[["name"]]), y = value)) +
-  geom_bar(stat = "identity") +
-  theme_minimal() +
-  theme(axis.text.x = element_text(size = 12, angle = 90, hjust = 1, vjust =0.5),
-        axis.text.y = element_text(size =12)) +
-  xlab("") +
-  ylab("Spearman Correlation \n scITD Fact. 1 and MOFA Fact. 1")
-
-dev.off()
-
-# Checking how scITD added background noise
+# 
 
 scITD_fscores_plt <- scITD_factor_scores %>% 
   as.data.frame() %>%
@@ -288,9 +211,6 @@ scITD_fscores_plt <- scITD_factor_scores %>%
   dplyr::mutate(patient_group = factor(patient_group,
                                        levels = c("myogenic", "fibrotic", "ischemic")))  %>%
   pivot_longer(-c(sample, major_labl, patient_group, batch)) %>%
-  dplyr::filter(name %in% c("scITD_Factor_1",
-                            "scITD_Factor_3",
-                            "scITD_Factor_4")) %>%
   ggplot(aes(x = patient_group, y = value, color =  patient_group)) +
   geom_boxplot() +
   geom_point() +
@@ -308,6 +228,8 @@ pdf("./results/MI/scITD/condition_scores.pdf", height = 2.3, width = 4.0)
 plot(scITD_fscores_plt)
 dev.off()
 
+# Checking how scITD added background noise
+
 scITDdat <- scITD_loadings %>%
   dplyr::filter(name == "Factor_1") %>%
   pull(data)
@@ -315,6 +237,8 @@ scITDdat <- scITD_loadings %>%
 MOFAdat <- factor_loadings %>%
   dplyr::filter(factors == "Factor1") %>%
   pull(data)
+
+# POSTN
 
 background_plt <- cbind("scITD" = scITDdat[[1]]["POSTN",], 
       "MOFA" = MOFAdat[[1]]["POSTN",]) %>%
@@ -334,6 +258,7 @@ pdf("./results/MI/comparison/background_comparison_POSTN.pdf", height = 2.5, wid
 plot(background_plt)
 dev.off()
 
+# TTN
 
 background_plt <- cbind("scITD" = scITDdat[[1]]["TTN",], 
                         "MOFA" = MOFAdat[[1]]["TTN",]) %>%

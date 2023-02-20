@@ -173,10 +173,6 @@ estimate_statevsglobal = function(state_pb,
     dplyr::filter(view %in% ct,
                   feature %in% ct_loads[["feature"]])
   
-  # ct_cond <- cond_pb %>%
-  #   dplyr::filter(view %in% ct,
-  #                 feature %in% ct_loads[["feature"]])
-  
   var1 = paste0(state_label, "_", "etasq")
   var2 = paste0(state_label, "_", "pval")
   

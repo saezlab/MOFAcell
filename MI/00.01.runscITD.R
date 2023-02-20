@@ -73,7 +73,7 @@ container <- form_tensor(container,
                          norm_method='trim', 
                          scale_factor=10000,
                          vargenes_method='norm_var_pvals', 
-                         vargenes_thresh=.1,
+                         vargenes_thresh= .1,
                          scale_var = TRUE, 
                          var_scale_power = 2)
 

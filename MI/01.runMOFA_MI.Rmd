@@ -418,8 +418,6 @@ plot(associated_batch)
 dev.off()
 ```
 
-From this analysis we identify Factor 1 to be associated with the histological descriptions.
-
 ## Explained variance per factor and summary heatmap
 
 We recover the explained variance per view per factor to evaluate if coordinated gene expression processes are coordinated between all the cell types or exclusive to only a group of them
@@ -523,6 +521,7 @@ plot(umap_plt)
 dev.off()
 ```
 
+We can also visualize the factors using Multidimensional scaling
 
 ```{r, fig.height=2.5, fig.width=4.5}
 factors <- get_factors(model, factors = "all")[[1]] 
@@ -552,7 +551,6 @@ pdf("./results/MI/MOFA_mcell/Factor_MDS.pdf", width = 3.8, height = 2.7)
 plot(mds_plt)
 dev.off()
 ```
-
 
 ## Paper stats
 

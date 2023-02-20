@@ -39,7 +39,6 @@ state_coldata <- read_csv("./data_MI/pb_coldata_states.csv",show_col_types = F)[
                                        levels = c("myogenic", "fibrotic", "ischemic")))
 ```
 
-
 # Import loadings
 
 ```{r}
@@ -74,6 +73,8 @@ head(loadings)
 ```
 
 # First enrich cell-state markers into the loading matrix
+
+Here we use overrepresentation analysis with hypergeometric tests
 
 ```{r}
 GSE_analysis = function(geneList,Annotation_DB){
@@ -114,10 +115,7 @@ GSE_analysis = function(geneList,Annotation_DB){
 ```
 
 ```{r}
-# State markers from the Kuppe et. al. paper
-
-state_mrkrs <- readRDS(file = "./data_MI/state_genesets_list.rds")
-
+# State markers from the Kuppe et. al. paper, recalculated with t-tests
 state_mrkrs <- read_csv("./data_MI/cell_states_mrkrs_ttest.csv", show_col_types = F) %>%
   dplyr::filter(pvals_adj < 0.05, logfoldchanges >= 0.5) %>%
   dplyr::mutate(cs_name = paste0(ct, "_", group)) %>%
@@ -127,6 +125,7 @@ state_mrkrs <- read_csv("./data_MI/cell_states_mrkrs_ttest.csv", show_col_types 
   dplyr::mutate(data = map(data, ~.x[[1]])) %>%
   deframe()
 
+# Enriching states into the loadings
 enrichment_per_ct <- set_names(cts) %>%
   map(., function(ct) {
     
@@ -145,6 +144,7 @@ enrichment_per_ct <- set_names(cts) %>%
     return(enrichment)
   })
 
+# Making plots per cell type
 plt_per_ct <- map(enrichment_per_ct, function(dat) {
   
   df_plt <- dat %>%
@@ -166,7 +166,6 @@ plt_per_ct <- map(enrichment_per_ct, function(dat) {
   return(enrich_plt)
   
 })
-
 ```
 
 # Plots for supplement
