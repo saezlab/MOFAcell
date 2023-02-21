@@ -264,13 +264,7 @@ model <- run_mofa(MOFAobject, outfile)
 
 We will associate clinical covariates to factor scores. For each factor score, we will perform an analysis of variance to clinical covariates of interest. 
 
-In this specific case we will identify which factors associate with the histological description
-
-## Association of factors to covariates
-
-We will associate clinical covariates to factor scores. For each factor score, we will perform an analysis of variance to clinical covariates of interest. 
-
-In this specific case we will identify which factors associate with the histological description
+In this specific case we will identify which factors associate with the patient 
 
 ```{r}
 get_associated_factors <- function(meta, model, predicted_label) {
@@ -303,6 +297,8 @@ get_associated_factors <- function(meta, model, predicted_label) {
   
 }
 ```
+
+# HF vs NF
 
 ```{r}
 meta <- sample_dict_red %>%
@@ -352,7 +348,7 @@ get_allfscores(model = model, meta = meta) %>%
 
 ```{r}
 expl_var_sex<- get_associated_factors(meta = meta,
-                                                          model = model,
+                                      model = model,
                                       predicted_label = "sex")
 expl_var_sex
 ```
@@ -370,8 +366,6 @@ get_allfscores(model = model, meta = meta) %>%
   theme(axis.text = element_text(size =12),
         axis.text.x = element_text(angle = 90, hjust = 1, vjust =0.5)) 
 ```
-
-From this analysis we identify Factor 1 to be associated with the disease descriptions.
 
 ## Explained variance per factor and summary heatmap
 

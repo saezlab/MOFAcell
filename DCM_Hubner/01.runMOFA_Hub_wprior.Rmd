@@ -138,7 +138,7 @@ pb_dat <- create_init_exp(counts = counts,
                      prior_mrks = mrkr_genes) %>%
   pb_dat2MOFA(pb_dat_list = .)
 
-pb_dat <- broad_data %>%
+pb_dat <- pb_dat %>%
   dplyr::filter(feature %in% broad_data$feature)
 
 saveRDS(pb_dat, "./data_DCMACM_Science/pb_red_wprior.rds")
@@ -239,9 +239,9 @@ expl_var_pgroup
 
 ```{r, fig.height=2.5, fig.width=4}
 get_allfscores(model = model, meta = meta) %>%
-  dplyr::filter(Factor %in% c("Factor1", "Factor2")) %>%
+  dplyr::filter(Factor %in% c("Factor6", "Factor2")) %>%
   pivot_wider(names_from = Factor, values_from = value) %>%
-  ggplot(., aes(x = Factor1,
+  ggplot(., aes(x = Factor6,
                 y = Factor2,
                 color = dis_code)) +
   geom_point(size = 2) +
