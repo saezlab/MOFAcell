@@ -15,6 +15,8 @@ library(cowplot)
 library(cluster)
 ```
 
+# Comparing the deconvolution from MOFAcell vs regular cell type deconvolution with SCDC
+
 ```{r}
 ct_codes <- c("CM", "Endo", "Fib", "Lymphoid", "Myeloid", "PC", "vSMCs")
 ct_names <- c("Ventricular_Cardiomyocyte", "Endothelial", "Fibroblast", "Lymphoid", "Myeloid", "Pericytes", "Smooth_muscle_cells")
@@ -22,7 +24,7 @@ ct_names <- c("Ventricular_Cardiomyocyte", "Endothelial", "Fibroblast", "Lymphoi
 ct_dict <- tibble(ct_codes, ct_names)
 ```
 
-## Bisque estimated cell proportions using the HCA
+## SCDC estimated cell proportions using the HCA
 
 ```{r}
 reheat_comps <- readRDS("./data_reheat/hca_reheat_scdc_mod.rds")
@@ -118,6 +120,8 @@ draw(scores_hmap)
 dev.off()
 ```
 
+Here we perform differences between HF vs NF using t-tests
+
 ```{r}
 ct_ds <- reheat_comps %>%
   group_by(name, ct) %>%
@@ -199,7 +203,7 @@ plot(all_stats_plt)
 dev.off()
 ```
 
-## Then make the comparison of the sillouhette score
+## Then make the comparison of the sillouhette scores
 
 ```{r}
 calculate_sw <- function(scores, meta, test_label) {
@@ -231,7 +235,7 @@ meta_test <- anns_hmap %>%
 #Import MOFAcell deconvolution results
 ds_data_hmap <- readRDS("./results/META/ds_mofacell_mat.rds")
 
-# Compare batch clustering
+# Compare patient condition clustering
 batch_sw <- bind_rows(calculate_sw(data_hmap, meta_test, "HeartFailure") %>%
   mutate(method = "SCDC"),
 calculate_sw(ds_data_hmap, meta_test, "HeartFailure") %>%

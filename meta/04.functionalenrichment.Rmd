@@ -14,6 +14,8 @@ library(decoupleR)
 source("./MOFAcell/factorutils.R")
 ```
 
+Here we use progeny to infer activities from the gene loadings of the meta-model of Reichart2022 and Chaffin2022
+
 ## What are the genes that we prioritize in the meta analysis?
 
 ```{r}
@@ -35,8 +37,9 @@ get_floadings(model = model,
               factor = "Factor1") %>%
   dplyr::filter(abs(value)>=0.1) %>% 
   write_csv("./results/META/MOFAcell_metaloadings.csv")
-
 ```
+
+## Perform estimation of pathway activities using PROGENy
 
 ```{r}
 net <- get_progeny(organism = 'human', top = 500)

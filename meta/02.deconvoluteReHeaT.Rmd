@@ -17,6 +17,7 @@ library(MOFA2)
 source("./MOFAcell/factorutils.R")
 ```
 
+Importing the results from the meta-model
 
 ```{r}
 model_outfile <- "./results/META/MOFA_mcell/model.hdf5"
@@ -25,6 +26,7 @@ pb_data <- read_csv("./results/META/alldat.csv")
 meta <- read_csv("./results/META/allmeta.csv")
 ```
 
+Getting factor scores and loadings (Factor 1)
 
 ```{r}
 # Get factor scorees
@@ -36,6 +38,8 @@ factor_loadings <- get_floadings(model = model,
                                    factor = "Factor1")
 
 ```
+
+Import ReHeaT studies, scale normalized expression and calculate weighted means
 
 ```{r}
 # Calculate disease scores for all samples ----------------------------------
@@ -66,6 +70,7 @@ dr_res <- map(reheat, function(x) {
 ```
 
 ## Make matrix with all scores
+
 ```{r}
 sample_info <- dr_res %>%
   dplyr::select(condition, HeartFailure, name) %>%
@@ -172,7 +177,7 @@ dev.off()
 ```
 
 ```{r, fig.height=3.7, fig.width= 3.5}
-# Here we are using the difference between the means of standardized scores
+# Here we are using the t-values
 reheat_stats_plt <- ggplot(ct_ds_stat, aes(y = name, 
                        x  = source, 
                        fill = statistic,
