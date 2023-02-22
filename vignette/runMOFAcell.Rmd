@@ -28,7 +28,7 @@ We repurposed the statistical framework of multi-omics factor analysis [(MOFA)](
 
 ## Data
 
-Here we demonstrate how to use MOFA for a multicellular factor analysis by applying it to a cross-condition atlas. Single nuclei RNAseq (sn-RNAseq) gene count expression matrices from 27 human heart tissue samples (patient-area) from our previous [work](https://www.nature.com/articles/s41586-022-05060-x) were used. Samples were previously annotated as myogenic-enriched, ischemic-enriched, and fibrotic-enriched, summarizing the distinct physiological zones and time-points after human myocardial infarction. The data was downloaded from the [Human Cell Atlas](https://data.humancellatlas.org/explore/projects/e9f36305-d857-44a3-93f0-df4e6007dc97) and imported into a SummarizedExperiment v1.24.0 R object, before generating pseudobulk expression profiles for each cell type and patient. The pseudobulk expression of the data can be downloaded from [FigShare]().
+Here we demonstrate how to use MOFA for a multicellular factor analysis by applying it to a cross-condition atlas. Single nuclei RNAseq (sn-RNAseq) gene count expression matrices from 27 human heart tissue samples (patient-area) from our previous [work](https://www.nature.com/articles/s41586-022-05060-x) were used. Samples were previously annotated as myogenic-enriched, ischemic-enriched, and fibrotic-enriched, summarizing the distinct physiological zones and time-points after human myocardial infarction. The data was downloaded from the [Human Cell Atlas](https://data.humancellatlas.org/explore/projects/e9f36305-d857-44a3-93f0-df4e6007dc97) and imported into a SummarizedExperiment v1.24.0 R object, before generating pseudobulk expression profiles for each cell type and patient. The pseudobulk expression of the data can be downloaded from [Zenodo](https://zenodo.org/record/7660312#.Y_YQmezMK-Z).
 
 ```{r}
 meta <- read_csv("./data_MI/pb_metadata.csv", show_col_types = FALSE)
@@ -51,11 +51,11 @@ SummarizedExperiment::assay(pbulk_obj[1:5,1:5], "counts")
 SummarizedExperiment::colData(pbulk_obj)[1:5,]
 ```
 
-However, we will guide you on the creation of an universal input for a multicellular factor analysis
+However, we will guide you in the creation of an universal input for a multicellular factor analysis
 
-#### Prepare a count matrix and a column annotation
+#### Prepare a count matrix and its column annotations
 
-Counts should be a matrix containing genes in rows and samples in columns
+Counts should be a named matrix containing genes in rows and samples in columns
 
 ```{r}
 counts <- assay(pbulk_obj, "counts")
@@ -77,7 +77,10 @@ coldata <- colData(pbulk_obj) %>%
   dplyr::mutate(colid = paste0(cell_type, "_", donor_id)) %>%
   tibble::column_to_rownames("colid")
 
+# Here we name the columns of the count matrix
 colnames(counts) <- rownames(coldata)
+
+head(coldata)
 ```
 
 #### Prepare input for multicellular factor analysis - Function defintion
@@ -186,7 +189,7 @@ tmm_trns <- function(pb_dat_list, scale_factor = 1000000) {
 }
 ```
 
-Identification of highly variable genes per cell type using `scran::getTopHVGs()`
+Identification of highly variable genes per cell type using `scran::getTopHVGs()`, however you can also provide your own list of highly variable genes
 
 ```{r}
 # Performs filtering of highly variable genes (after data transformation)
@@ -342,6 +345,7 @@ cts <- c("CM", "Endo", "Fib", "Lymphoid",
          "Myeloid", "PC", "vSMCs") 
 ```
 
+
 2. Collect marker genes per cell type which are going to be used to filter background from the model
 
 ```{r}
@@ -375,7 +379,32 @@ pb_dat <- create_init_exp(counts = counts,
   filt_gex_bybckgrnd(pb_dat_list = ., # Optional
                      prior_mrks = mrkr_genes) %>%
   pb_dat2MOFA(pb_dat_list = .)
+```
 
+To be consistent to the results in the manuscript, we will also show how to use a custom list of highly variable genes, in this case, estimated using PAGODA2's method adapted from [scITD](https://github.com/kharchenkolab/scITD)
+
+```{r}
+prior_hvg <- readRDS("./scITDdata/hvg_list.rds")
+```
+
+This object is a named list with highly variable genes per cell-type. We can re-run the data preparation with this prior
+
+```{r, warning=FALSE, message=FALSE}
+pb_dat <- create_init_exp(counts = counts,
+                          coldata = coldata) %>%
+  filt_profiles(pb_dat = ., # Optional
+                ncells = 25,
+                cts = cts) %>%
+  filt_gex_byexpr(pb_dat_list = .,
+                  min.count = 100,
+                  min.prop = 0.25) %>%
+  tmm_trns(pb_dat_list = .) %>%
+  filt_gex_byhvg(pb_dat_list = ., # Optional
+                 prior_hvg = prior_hvg,
+                 var.threshold = NULL) %>%
+  filt_gex_bybckgrnd(pb_dat_list = ., # Optional
+                     prior_mrks = mrkr_genes) %>%
+  pb_dat2MOFA(pb_dat_list = .)
 ```
 
 ## 2. Running MOFA

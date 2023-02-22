@@ -52,7 +52,7 @@ Atlas](https://data.humancellatlas.org/explore/projects/e9f36305-d857-44a3-93f0-
 and imported into a SummarizedExperiment v1.24.0 R object, before
 generating pseudobulk expression profiles for each cell type and
 patient. The pseudobulk expression of the data can be downloaded from
-[FigShare]().
+[Zenodo](https://zenodo.org/record/7660312#.Y_YQmezMK-Z).
 
 ``` r
 meta <- read_csv("./data_MI/pb_metadata.csv", show_col_types = FALSE)
@@ -127,12 +127,12 @@ SummarizedExperiment::colData(pbulk_obj)[1:5,]
     ## 4       Adipo        control_P8         8
     ## 5       Adipo            FZ_P14        12
 
-However, we will guide you on the creation of an universal input for a
+However, we will guide you in the creation of an universal input for a
 multicellular factor analysis
 
-#### Prepare a count matrix and a column annotation
+#### Prepare a count matrix and its column annotations
 
-Counts should be a matrix containing genes in rows and samples in
+Counts should be a named matrix containing genes in rows and samples in
 columns
 
 ``` r
@@ -146,8 +146,30 @@ Column data must contain 3 columns: “donor_id” = sample id “cell_type” =
 which will define each view in the MOFA model “ncells” = number of cells
 from which the pseudobulk profile was made
 
-Functions like `scuttle::summarizeAssayByGroup()` already provides this
+Functions like `scuttle::summarizeAssayByGroup()` already provide this
 type of information
+
+``` r
+coldata <- colData(pbulk_obj) %>%
+  as.data.frame() %>%
+  dplyr::rename("donor_id" = "patient_region_id",
+         "cell_counts" = "ncells") %>%
+  dplyr::mutate(colid = paste0(cell_type, "_", donor_id)) %>%
+  tibble::column_to_rownames("colid")
+
+# Here we name the columns of the count matrix
+colnames(counts) <- rownames(coldata)
+
+head(coldata)
+```
+
+    ##                   cell_type    donor_id cell_counts
+    ## Adipo_control_P1      Adipo  control_P1           2
+    ## Adipo_control_P17     Adipo control_P17           2
+    ## Adipo_control_P7      Adipo  control_P7           3
+    ## Adipo_control_P8      Adipo  control_P8           8
+    ## Adipo_FZ_P14          Adipo      FZ_P14          12
+    ## Adipo_FZ_P18          Adipo      FZ_P18         175
 
 #### Prepare input for multicellular factor analysis - Function defintion
 
@@ -155,7 +177,7 @@ Here we propose a workflow that can be used to process, filter,
 normalize, and format data ready for a MOFA model for multicellular
 factor analysis
 
-1.  We rely on `SummarizedExperiment` to prepare data for processing
+We rely on `SummarizedExperiment` to prepare data for processing
 
 ``` r
 # Creates summarized experiment from a count matrix and column annonations
@@ -170,8 +192,8 @@ create_init_exp <- function(counts, coldata) {
 }
 ```
 
-1.  For each cell type we keep profiles generated at least from **n**
-    number of cells
+For each cell type we keep profiles generated at least from **n** number
+of cells
 
 ``` r
 # Filter pseudobulk expression profiles generated with less than n cells
@@ -212,8 +234,8 @@ filt_profiles <- function(pb_dat, ncells = 50, cts) {
 }
 ```
 
-1.  For each cell-type (view) we filter lowly expressed genes using
-    `edgeR::filterByExpr()`
+For each cell-type (view) we filter lowly expressed genes using
+`edgeR::filterByExpr()`
 
 ``` r
 # Performs filtering of lowly expressed genes
@@ -235,8 +257,8 @@ filt_gex_byexpr <- function(pb_dat_list, min.count, min.prop) {
 }
 ```
 
-1.  Normalization of pseudobulk expression profiles using Trimmed Mean
-    of the M-values (TMM) from `edgeR::calcNormFactors`
+Normalization of pseudobulk expression profiles using Trimmed Mean of
+the M-values (TMM) from `edgeR::calcNormFactors`
 
 ``` r
 # Performs normalization via TMM
@@ -260,8 +282,9 @@ tmm_trns <- function(pb_dat_list, scale_factor = 1000000) {
 }
 ```
 
-1.  Identification of highly variable genes per cell type using
-    `scran::getTopHVGs()`
+Identification of highly variable genes per cell type using
+`scran::getTopHVGs()`, however you can also provide your own list of
+highly variable genes
 
 ``` r
 # Performs filtering of highly variable genes (after data transformation)
@@ -319,8 +342,8 @@ filt_gex_byhvg <- function(pb_dat_list, prior_hvg = NULL, var.threshold = 1) {
 }
 ```
 
-1.  You can also filter the highly variable genes of each cell type, by
-    avoiding genes considered background
+You can also filter the highly variable genes of each cell type, by
+avoiding genes considered background
 
 ``` r
 # Performs filtering of highly variable genes (after data transformation)
@@ -377,7 +400,7 @@ filt_gex_bybckgrnd <- function(pb_dat_list, prior_mrks) {
 }
 ```
 
-1.  Finally create a data frame ready to be used in MOFA
+Finally create a data frame ready to be used in MOFA
 
 ``` r
 # Makes a MOFA ready data set
@@ -457,6 +480,36 @@ pb_dat <- create_init_exp(counts = counts,
   pb_dat2MOFA(pb_dat_list = .)
 ```
 
+To be consistent to the results in the manuscript, we will also show how
+to use a custom list of highly variable genes, in this case, estimated
+using PAGODA2’s method adapted from
+[scITD](https://github.com/kharchenkolab/scITD)
+
+``` r
+prior_hvg <- readRDS("./scITDdata/hvg_list.rds")
+```
+
+This object is a named list with highly variable genes per cell-type. We
+can re-run the data preparation with this prior
+
+``` r
+pb_dat <- create_init_exp(counts = counts,
+                          coldata = coldata) %>%
+  filt_profiles(pb_dat = ., # Optional
+                ncells = 25,
+                cts = cts) %>%
+  filt_gex_byexpr(pb_dat_list = .,
+                  min.count = 100,
+                  min.prop = 0.25) %>%
+  tmm_trns(pb_dat_list = .) %>%
+  filt_gex_byhvg(pb_dat_list = ., # Optional
+                 prior_hvg = prior_hvg,
+                 var.threshold = NULL) %>%
+  filt_gex_bybckgrnd(pb_dat_list = ., # Optional
+                     prior_mrks = mrkr_genes) %>%
+  pb_dat2MOFA(pb_dat_list = .)
+```
+
 ## 2. Running MOFA
 
 Once the single cell data is transformed into a multi-view
@@ -527,14 +580,14 @@ factor_scores <- MOFA2::get_factors(model, factors = "all")[[1]]
 factor_scores[1:3,]
 ```
 
-    ##                Factor1     Factor2    Factor3     Factor4    Factor5
-    ## control_P1  -1.4867662  0.08454173 -0.2912002 -0.01193016 -0.2225849
-    ## control_P17 -1.6749471 -0.03217596  0.3265139  0.03121244 -0.2352286
-    ## control_P7  -0.8774072 -0.04828783  0.2475353 -0.10665665 -0.1192419
-    ##                 Factor6
-    ## control_P1   0.09866500
-    ## control_P17  0.05112290
-    ## control_P7  -0.04481138
+    ##                Factor1    Factor2     Factor3     Factor4      Factor5
+    ## control_P1  -1.8889475  0.1261866 -0.39893568 -0.09634936 -0.129570147
+    ## control_P17 -1.7912835 -0.2277354  0.05984362 -0.27265997 -0.007776657
+    ## control_P7  -0.8480087 -0.1747772 -0.23178426 -0.39840507  0.293306732
+    ##                Factor6
+    ## control_P1   0.3503120
+    ## control_P17  0.2037113
+    ## control_P7  -0.1343896
 
 To visualize the variability of samples one can use `ComplexHeatmap`:
 
@@ -575,7 +628,7 @@ scores_hmap <- Heatmap(factor_scores[rownames(row_anns),],
 draw(scores_hmap)
 ```
 
-![](runMOFAcell_files/figure-markdown_github/unnamed-chunk-18-1.png)
+![](runMOFAcell_files/figure-markdown_github/unnamed-chunk-20-1.png)
 
 This latent space can be used for other type of dimensionality
 reductions like multidimensional scaling or uniform manifold
@@ -596,7 +649,7 @@ model@cache$variance_explained$r2_total$single_group %>%
   xlab("")
 ```
 
-![](runMOFAcell_files/figure-markdown_github/unnamed-chunk-19-1.png)
+![](runMOFAcell_files/figure-markdown_github/unnamed-chunk-21-1.png)
 
 #### Association of latent variables to covariates of interest
 
@@ -713,12 +766,12 @@ get_associated_factors(meta = meta,
     ## # A tibble: 6 × 4
     ##   Factor  term           p.value adj_pvalue
     ##   <chr>   <chr>            <dbl>      <dbl>
-    ## 1 Factor1 patient_group 1.50e-12   8.99e-12
-    ## 2 Factor2 patient_group 7.57e- 1   1   e+ 0
-    ## 3 Factor3 patient_group 6.44e- 2   3.22e- 1
-    ## 4 Factor4 patient_group 9.57e- 1   1   e+ 0
-    ## 5 Factor5 patient_group 3.22e- 1   1   e+ 0
-    ## 6 Factor6 patient_group 2.54e- 1   1   e+ 0
+    ## 1 Factor1 patient_group 2.06e-12   1.24e-11
+    ## 2 Factor2 patient_group 1.55e- 1   6.19e- 1
+    ## 3 Factor3 patient_group 1.48e- 2   7.39e- 2
+    ## 4 Factor4 patient_group 6.64e- 1   1   e+ 0
+    ## 5 Factor5 patient_group 3.69e- 1   1   e+ 0
+    ## 6 Factor6 patient_group 4.57e- 1   1   e+ 0
 
 Factor 1 is associated with patient conditions, we can visualize it
 
@@ -737,7 +790,7 @@ get_allfscores(model = model, meta = meta) %>%
         legend.position = "none")
 ```
 
-![](runMOFAcell_files/figure-markdown_github/unnamed-chunk-22-1.png)
+![](runMOFAcell_files/figure-markdown_github/unnamed-chunk-24-1.png)
 
 Similarly as before, we can explore the amount of explained variance of
 the original data captured by this factor alone
@@ -753,7 +806,7 @@ model@cache$variance_explained$r2_per_factor[[1]]["Factor1",] %>%
   xlab("")
 ```
 
-![](runMOFAcell_files/figure-markdown_github/unnamed-chunk-23-1.png)
+![](runMOFAcell_files/figure-markdown_github/unnamed-chunk-25-1.png)
 
 #### Multicellular programs
 
@@ -798,20 +851,13 @@ factor_loadings <- get_floadings(model = model,
 head(factor_loadings)
 ```
 
-    ##                    CM       Endo        Fib Lymphoid    Myeloid         PC
-    ## TTTY14     -0.3116145  0.0000000  0.0000000        0  0.0000000  0.0000000
-    ## UTY        -0.2606147 -0.1391535 -0.1607908        0 -0.1013822 -0.2144376
-    ## MLIP-AS1   -1.3367531  0.0000000  0.0000000        0  0.0000000  0.0000000
-    ## USP9Y      -0.2477194 -0.1064648 -0.1513204        0 -0.1095614  0.0000000
-    ## AC108058.1 -1.2757894  0.0000000  0.0000000        0  0.0000000  0.0000000
-    ## AC107068.2 -0.9622975  0.0000000  0.0000000        0  0.0000000  0.0000000
-    ##            vSMCs
-    ## TTTY14         0
-    ## UTY            0
-    ## MLIP-AS1       0
-    ## USP9Y          0
-    ## AC108058.1     0
-    ## AC107068.2     0
+    ##                    CM       Endo        Fib Lymphoid     Myeloid PC vSMCs
+    ## PERM1      -0.4225834  0.0000000  0.0000000        0  0.00000000  0     0
+    ## SLC35E2B   -0.0424052  0.0000000  0.0000000        0  0.00000000  0     0
+    ## RNF207     -0.2306263  0.0000000  0.0000000        0  0.00000000  0     0
+    ## PER3       -0.2368354 -0.1441705 -0.1664941        0 -0.08575262  0     0
+    ## MIR34AHG    0.6055083  0.0000000  0.2904394        0  0.19566971  0     0
+    ## AL139423.1 -0.5091131  0.0000000  0.0000000        0  0.00000000  0     0
 
 Functional interpretation of them for example with pathway activities
 can help you to understand the multicellular processes describing the
@@ -838,20 +884,20 @@ ct_acts_mat <- ct_acts %>%
 head(ct_acts_mat)
 ```
 
-    ##                  CM       Endo       Fib    Lymphoid      Myeloid         PC
-    ## Androgen  0.3168017 -0.8743556 -1.390837 -0.84032671 -0.680816307 0.01216755
-    ## EGFR      2.8720586  0.1882395  3.608483 -0.87710275  1.018697069 0.17097000
-    ## Estrogen -1.4270414  2.4775921  1.194701  0.19228901  1.663059146 1.23313027
-    ## Hypoxia   4.8395577 -0.5214670  1.498093  0.05161650  0.982373298 0.61224496
-    ## JAK-STAT  3.2658194 -5.0000000  0.592671 -0.25270463 -1.816857679 0.51300436
-    ## MAPK      1.9985320  0.8380131  2.002653 -0.07481369 -0.007306838 0.98781997
-    ##                vSMCs
-    ## Androgen  5.03036791
-    ## EGFR      0.79980677
-    ## Estrogen  0.90059170
-    ## Hypoxia   0.51287352
-    ## JAK-STAT -0.07589619
-    ## MAPK      1.08712639
+    ##                  CM        Endo       Fib    Lymphoid     Myeloid        PC
+    ## Androgen  2.1931742  0.03164987 0.2920262 -0.31991766  0.23740608 0.9714933
+    ## EGFR      1.1643491 -0.03147718 2.5320548  0.09942547  1.39812560 0.4866245
+    ## Estrogen -0.6943587  3.64088961 0.9370928  0.10343635  2.22647842 1.2007409
+    ## Hypoxia   3.3473974 -0.12225519 1.4090057  0.13875661  1.09616848 0.8854833
+    ## JAK-STAT  3.4504057 -5.00000000 1.1770243  0.84027767 -1.09445040 0.6261094
+    ## MAPK      1.2740117  1.12185286 1.5455688  0.09861269 -0.01585042 1.5946439
+    ##                  vSMCs
+    ## Androgen  4.4987523757
+    ## EGFR      0.8241499276
+    ## Estrogen  0.7211328152
+    ## Hypoxia   0.4772205704
+    ## JAK-STAT  0.1528036442
+    ## MAPK     -0.0003118392
 
 ``` r
 hmap <- ComplexHeatmap::Heatmap((ct_acts_mat), 
@@ -862,7 +908,7 @@ hmap <- ComplexHeatmap::Heatmap((ct_acts_mat),
 draw(hmap)
 ```
 
-![](runMOFAcell_files/figure-markdown_github/unnamed-chunk-27-1.png)
+![](runMOFAcell_files/figure-markdown_github/unnamed-chunk-29-1.png)
 
 Since the cell type specific expression of genes with positive gene
 weights associates with ischemic samples (see previous section),

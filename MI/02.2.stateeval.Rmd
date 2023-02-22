@@ -39,7 +39,7 @@ annotation_names <- tibble(patient_group = c("group_1",
                                                   "fibrotic"))
 
 batch_info <- read_csv("./data_MI/snrna_batch_ann.csv", show_col_types = F) %>%
-  select(orig.ident, batch) %>%
+  dplyr::select(orig.ident, batch) %>%
   unique()
 
 sample_dict <- read_csv("./data_MI/rna_patient_anns_revisions.csv",show_col_types = F) %>%
