@@ -10,10 +10,14 @@ Cross-condition single-cell atlases are essential in the characterization of hum
 
 ### How to implement
  
- All the necessary tools for modeling are already available in Bioconductor's [MOFA2](https://biofam.github.io/MOFA2/) package. However to facilitate the implementation of this framework to your own data we have collected detailed vignettes [here](https://github.com/saezlab/MOFAcell/blob/main/vignette/runMOFAcell.md)
+ All the necessary tools for modeling are already available in Bioconductor's [MOFA2](https://biofam.github.io/MOFA2/) package. 
+ 
+ A complementary R package [MOFAcellulaR](https://github.com/saezlab/MOFAcellulaR) facilitates the usage of MOFA for the unsupervised analysis of samples and estimation of multicellular programs.
+ 
+ A python implementation within our [LIANA](https://github.com/saezlab/liana-py) framework is available [here](https://liana-py.readthedocs.io/en/latest/notebooks/mofacellular.html)
 
 ### How to cite
- > Ramirez-Flores RO, Lanzer JD, Dimitrov D, Velten B, Saez-Rodriguez J. “Multicellular factor analysis for a tissue-centric understanding of disease” BioRxiv. 2023. DOI: [XXX]()
+ > Ramirez-Flores RO, Lanzer JD, Dimitrov D, Velten B, Saez-Rodriguez J. “Multicellular factor analysis for a tissue-centric understanding of disease” BioRxiv. 2023. DOI: [10.1101/2023.02.23.529642](https://www.biorxiv.org/content/10.1101/2023.02.23.529642v1)
 
 ### Availabilty of data
 
@@ -29,7 +33,7 @@ Please deposit the unzipped folders in the root directory of this R-project.
 
 **Exceptions:**
   
-Spatial data used in this publication is not shared in this Zenodo entry but rather we redirect to the original files that can be consulted [here]()
+Spatial data used in this publication is not shared in this Zenodo entry but rather we redirect to the original files that can be consulted [here](https://github.com/saezlab/visium_heart)
 
 ***
 
