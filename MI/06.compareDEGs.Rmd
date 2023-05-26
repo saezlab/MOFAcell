@@ -1,0 +1,156 @@
+---
+title: "Comparison of MOFAcell vs DEGs"
+author: "Ricardo Ramirez"
+date: "2023-05-26"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=TRUE, message=FALSE}
+library(tidyverse)
+library(MOFAcellulaR)
+library(cowplot)
+```
+
+## Putting all data together
+
+```{r load}
+# Getting loading info
+model_outfile <- "./results/MI/MOFA_mcell/MI_model6factors.hdf5"
+model <- MOFA2::load_model(model_outfile)
+gene_weights <- MOFAcellulaR::get_geneweights(model = model, factor = "Factor1")
+
+# Getting degs
+degs <- read_csv("./results/MI/classic_degs.csv", show_col_types = FALSE)
+
+# Putting both info together
+all_data <- left_join(gene_weights, degs, 
+          by = c("ctype" = "view", 
+                 "feature" = "gene")) %>%
+  na.omit() # To keep only genes from MOFAcell
+```
+
+## Simplest is to compare if the log fold change correlates with scores (Should be high)
+
+```{r}
+corr_scores <- all_data %>% 
+  group_by(ctype, name) %>%
+  summarize(p_corr = cor(logFC, value,
+                         method = "pearson"))
+```
+
+```{r, fig.height=3, fig.width=2.5}
+cor_tile <- ggplot(corr_scores, aes(x = name, y = ctype, fill = p_corr)) +
+  geom_tile(color = "white") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        axis.text = element_text(size = 11),
+        plot.margin = unit(c(0, 0, 0, 0), "cm")) +
+  coord_equal() +
+  scale_fill_gradient2(high = "darkred", low = "white") +
+  ylab("") +
+  xlab("contrast")
+  
+plot(cor_tile)
+```
+
+```{r}
+corr_scores %>%
+  group_by(name) %>%
+  summarize(mean(p_corr),
+            median(p_corr))
+```
+
+So, the analyzed factor scores correlate a lot with the LFCs of isch <- fib <- myog disease trajectory
+
+## The question is regarding if there are genes that were unique to MOFA
+
+It is hard to compare this directly, because:
+
+1) The definition of HVGs before fitting the MOFA model reduces the number of genes tested, but from these...
+
+```{r}
+prop_sign <- all_data %>%
+  dplyr::mutate(significant = ifelse(FDR <= 0.05, 1, 0)) %>%
+  dplyr::group_by(name, ctype) %>%
+  dplyr::mutate(tested_genes = n(),
+                sign_genes = sum(significant)) %>%
+  dplyr::select(ctype, name, tested_genes, sign_genes) %>%
+  unique() %>%
+  mutate(prop_sign = sign_genes/tested_genes) %>%
+  ungroup() %>%
+  arrange(ctype, name)
+```
+
+```{r}
+prop_tile <- ggplot(prop_sign, aes(x = name, y = ctype, fill = prop_sign)) +
+  geom_tile(color = "white") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        axis.text = element_text(size = 11),
+        plot.margin = unit(c(0, 0, 0, 0), "cm")) +
+  coord_equal() +
+  scale_fill_gradient2(high = "black", low = "white") +
+  ylab("") +
+  xlab("contrast")
+  
+plot(prop_tile)
+```
+
+```{r}
+prop_sign %>%
+  group_by(name) %>%
+  summarize(mean(prop_sign),
+            median(prop_sign))
+```
+
+```{r}
+panel <- cowplot::plot_grid(cor_tile, prop_tile, align = "hv", ncol = 2)
+
+pdf("./results/MI/comparison_degs.pdf", height = 4, width = 6)
+
+plot(panel)
+
+dev.off()
+```
+
+But if we are strict, then the factor captures genes that are both significant between myog and isch and isch and myog and myog and fibrotic (which means, significant in the three contrasts)
+
+```{r}
+strict_cut <- all_data %>%
+  dplyr::mutate(significant = ifelse(FDR <= 0.05, 1, 0)) %>%
+  dplyr::group_by(feature, ctype) %>%
+  summarize(n_contrasts = sum(significant)) %>%
+  group_by(ctype) %>%
+  mutate(n_genes = n()) %>%
+  dplyr::filter(n_contrasts == 3) %>%
+  mutate(n_sign_genes = n()) %>%
+  dplyr::select(ctype, n_genes, n_sign_genes) %>%
+  unique() %>%
+  dplyr::mutate(prop_sign = n_sign_genes/n_genes)
+
+strict_cut$prop_sign %>% mean()
+strict_cut$prop_sign %>% median()
+
+```
+
+If we are flexible, then at least in one contrast
+
+```{r}
+flexible_cut <- all_data %>%
+  dplyr::mutate(significant = ifelse(FDR <= 0.05, 1, 0)) %>%
+  dplyr::group_by(feature, ctype) %>%
+  summarize(n_contrasts = sum(significant)) %>%
+  group_by(ctype) %>%
+  mutate(n_genes = n()) %>%
+  dplyr::filter(n_contrasts > 0) %>%
+  mutate(n_sign_genes = n()) %>%
+  dplyr::select(ctype, n_genes, n_sign_genes) %>%
+  unique() %>%
+  dplyr::mutate(prop_sign = n_sign_genes/n_genes)
+
+flexible_cut$prop_sign %>% mean()
+flexible_cut$prop_sign %>% median()
+```
+
