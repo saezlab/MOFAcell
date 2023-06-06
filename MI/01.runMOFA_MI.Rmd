@@ -17,8 +17,11 @@ library(MOFA2)
 library(HDF5Array)
 library(ComplexHeatmap)
 library(circlize)
-source("./MOFAcell/MOFAcellprep.R")
-source("./MOFAcell/factorutils.R")
+library(MOFAcellulaR)
+library(tidyverse)
+library(ggpubr)
+#source("./MOFAcell/MOFAcellprep.R")
+#source("./MOFAcell/factorutils.R")
 ```
 
 ```{r, echo=FALSE}
@@ -134,21 +137,24 @@ mrkr_genes <- mrkr_genes %>% #dplyr::filter(!name %in% exclude_ct) %>%
   deframe()
 
 # Do all processing of counts matrices
-pb_dat <- create_init_exp(counts = counts,
-                          coldata = coldata) %>%
-  filt_profiles(pb_dat = .,
-                ncells = 25,
-                cts = cts) %>%
-  filt_gex_byexpr(pb_dat_list = .,
-                  min.count = 100,
-                  min.prop = 0.25) %>%
-  tmm_trns(pb_dat_list = .) %>%
-  filt_gex_byhvg(pb_dat_list = .,
-                 prior_hvg = pagoda_hvgs,
-                 var.threshold = NULL) %>%
-  filt_gex_bybckgrnd(pb_dat_list = ., 
-                     prior_mrks = mrkr_genes) %>%
-  pb_dat2MOFA(pb_dat_list = .)
+pb_dat <- MOFAcellulaR::create_init_exp(counts = counts,  
+                                               coldata = coldata) %>%
+  MOFAcellulaR::filt_profiles(pb_dat = .,
+                          cts = cts,
+                          ncells = 25,
+                          counts_col = "cell_counts", # This refers to the column name in testcoldata where the number of cells per profile was stored
+                          ct_col = "cell_type") %>%
+  MOFAcellulaR::filt_gex_byexpr(pb_dat_list = .,
+                                min.count = 100,
+                                min.prop = 0.25) %>%
+  MOFAcellulaR::tmm_trns(pb_dat_list = .,
+                         scale_factor = 1000000) %>%
+  MOFAcellulaR::filt_gex_byhvg(pb_dat_list = .,
+                               prior_hvg = pagoda_hvgs,
+                               var.threshold = NULL) %>%
+  MOFAcellulaR::filt_gex_bybckgrnd(pb_dat_list = .,
+                                            prior_mrks = mrkr_genes) %>%
+  MOFAcellulaR::pb_dat2MOFA(pb_dat_list = .)
 
 saveRDS(pb_dat, "./data_MI/mi_pb_red.rds")
 ```
@@ -218,7 +224,7 @@ model_opt_plt <- total_meanR2 %>%
   dplyr::mutate(value = as.numeric(value)) %>%
   ggplot(aes(x = name, y = value)) +
   geom_bar(stat = "identity") +
-  theme_classic2() +
+  theme_classic() +
   theme(axis.text = element_text(size = 12)) +
   ylab("Mean total expl. var.") +
   xlab("Number of factors")
@@ -250,39 +256,6 @@ We will associate clinical covariates to factor scores. For each factor score, w
 In this specific case we will identify which factors associate with the histological description
 
 ```{r}
-get_associated_factors <- function(meta, model, predicted_label) {
-  
-  factors <- get_allfscores(model = model, meta = meta)
-  
-  # Get factors associated with patient group
-  factors <- factors %>%
-  dplyr::select_at(c("sample", predicted_label, "Factor", "value")) %>%
-  group_by(Factor) %>%
-  nest() %>%
-  mutate(pvalue = map(data, function(dat) {
-    
-    gene_aov <- aov(as.formula(paste0("value ~ ", predicted_label)), data = dat) %>%
-      broom::tidy() %>%
-      dplyr::filter(term == predicted_label) %>%
-      dplyr::select(term, p.value)
-    
-    return(gene_aov)
-  })) %>%
-  tidyr::unnest(pvalue) %>%
-  dplyr::ungroup() %>%
-  dplyr::mutate(adj_pvalue = p.adjust(p.value))
-
-  expl_var <- factors %>%
-  dplyr::select(Factor, term, p.value, adj_pvalue)
-
-  return(expl_var)
-  
-}
-```
-
-### Generating a simplified annotation of samples
-
-```{r}
 meta <- sample_dict_red %>%
   dplyr::rename("sample" = "patient_region_id") %>%
   dplyr::mutate(patient_group = gsub("-enriched", "", patient_group)) %>%
@@ -304,7 +277,13 @@ my_batch_comparisons <- list(c("A","B"))
 ANOVA reported in the text
 
 ```{r}
-expl_var_pgroup <- get_associated_factors(meta = meta,model = model,predicted_label = "patient_group")
+expl_var_pgroup <- MOFAcellulaR::get_associations(model = model,
+                                       metadata = meta,
+                                        sample_id_column = "sample",
+                                        test_variable = "patient_group",
+                                        test_type = "categorical",
+                                        categorical_type = "non-parametric",
+                                        group = FALSE)
 
 expl_var_pgroup
 
@@ -315,24 +294,29 @@ expl_var_pgroup %>%
 T-test reported in the legends for factor 1
 
 ```{r}
-pair_comp <- get_allfscores(model = model, meta = meta) %>%
-  dplyr::filter(Factor %in% c("Factor1")) %>%
-  compare_means(value ~ patient_group,  
+pair_comp <- MOFAcellulaR::get_tidy_factors(model, 
+                                 metadata = meta,
+                                 factor = "Factor1",
+                                 sample_id_column = "sample") %>%
+  ggpubr::compare_means(value ~ patient_group,  
                       data = .,
-                      method = "t.test", 
-                      alternative = "two.sided")
+                      method = "wilcox.test")
 
 pair_comp
 ```
 
 ```{r, fig.height=4, fig.width=2.5}
-max_val <- get_allfscores(model = model, meta = meta) %>%
-  dplyr::filter(Factor %in% c("Factor1")) %>%
+max_val <- MOFAcellulaR::get_tidy_factors(model, 
+                                 metadata = meta,
+                                 factor = "Factor1",
+                                 sample_id_column = "sample") %>%
   pull(value) %>%
   max() + 0.5
 
-associated_disease <- get_allfscores(model = model, meta = meta) %>%
-  dplyr::filter(Factor %in% c("Factor1")) %>%
+associated_disease <- MOFAcellulaR::get_tidy_factors(model, 
+                                 metadata = meta,
+                                 factor = "Factor1",
+                                 sample_id_column = "sample") %>%
   pivot_wider(names_from = Factor, values_from = value) %>%
   ggplot(., aes(x = patient_group,
                 y = Factor1,
@@ -363,43 +347,38 @@ plot(associated_disease)
 dev.off()
 ```
 
-```{r, fig.height=4, fig.width=2.5}
-get_allfscores(model = model, meta = meta) %>%
-  dplyr::filter(Factor %in% c("Factor3")) %>%
-  pivot_wider(names_from = Factor, values_from = value) %>%
-  ggplot(., aes(x = patient_group,
-                y = Factor3,
-                color = patient_group)) +
-  geom_boxplot() +
-  geom_point(size = 2) +
-  theme_classic() +
-  xlab("") +
-  scale_color_manual(values = set_names(c("#FF6666", "#3CB371", "#4169E1"), 
-                                        c("myogenic","ischemic", "fibrotic"))) +
-  theme(axis.text.x = element_text(size =12, angle = 90, hjust = 1, vjust = 0.5),
-        axis.text.y = element_text(size =12),
-        legend.position = "none")
-```
-
 ## Association to batch
 
 ```{r}
-expl_var_batch <- get_associated_factors(meta = meta,model = model,predicted_label = "batch")
+expl_var_batch <- MOFAcellulaR::get_associations(model = model,
+                                       metadata = meta,
+                                        sample_id_column = "sample",
+                                        test_variable = "batch",
+                                        test_type = "categorical",
+                                        categorical_type = "non-parametric",
+                                        group = FALSE)
 expl_var_batch
+```
+
+```{r}
+meta$batch %>% table()
 ```
 
 ```{r}
 my_batch_comparisons <- list(c("A","B"))
 
-associated_batch <- get_allfscores(model = model, meta = meta) %>%
-  dplyr::filter(Factor %in% c("Factor2")) %>%
+associated_batch_2 <- MOFAcellulaR::get_tidy_factors(model, 
+                                 metadata = meta,
+                                 factor = "Factor2",
+                                 sample_id_column = "sample") %>%
   pivot_wider(names_from = Factor, values_from = value) %>%
   ggplot(., aes(x = batch,
                 y = Factor2,
                 color = batch)) +
   geom_boxplot() +
   geom_point(size = 2) +
-  stat_compare_means(comparisons = my_batch_comparisons,
+  ggpubr::stat_compare_means(comparisons = my_batch_comparisons,
+                             method = "wilcox.test",
                      size = 2.5) +
   theme_classic() +
   theme(axis.text.x = element_text(size =12),
@@ -409,11 +388,41 @@ associated_batch <- get_allfscores(model = model, meta = meta) %>%
   scale_color_manual(values = set_names(c("black", "darkgrey"), c("A","B"))) 
   
 
-plot(associated_batch)
+plot(associated_batch_2)
+```
 
-pdf("./results/MI/MOFA_mcell/associated_batch.pdf", height = 2, width = 1.3)
 
-plot(associated_batch)
+```{r}
+my_batch_comparisons <- list(c("A","B"))
+
+associated_batch_4 <- MOFAcellulaR::get_tidy_factors(model, 
+                                 metadata = meta,
+                                 factor = "Factor4",
+                                 sample_id_column = "sample") %>%
+  pivot_wider(names_from = Factor, values_from = value) %>%
+  ggplot(., aes(x = batch,
+                y = Factor4,
+                color = batch)) +
+  geom_boxplot() +
+  geom_point(size = 2) +
+  ggpubr::stat_compare_means(comparisons = my_batch_comparisons,
+                             method = "wilcox.test",
+                     size = 2.5) +
+  theme_classic() +
+  theme(axis.text.x = element_text(size =12),
+        axis.text.y = element_text(size =12),
+        legend.position = "none") + 
+  xlab("") +
+  scale_color_manual(values = set_names(c("black", "darkgrey"), c("A","B"))) 
+  
+
+plot(associated_batch_4)
+
+batch_panel <- cowplot::plot_grid(associated_batch_2, associated_batch_4, nrow = 2, align = "hv")
+
+pdf("./results/MI/MOFA_mcell/associated_batch.pdf", height = 3, width = 1.3)
+
+plot(batch_panel)
 
 dev.off()
 ```
@@ -422,70 +431,29 @@ dev.off()
 
 We recover the explained variance per view per factor to evaluate if coordinated gene expression processes are coordinated between all the cell types or exclusive to only a group of them
 
-```{r, fig.height=10, fig.width=6}
-# Make the heatmap similar to scITD
+```{r}
+assoc_list <- list(condition = expl_var_pgroup, 
+                   batch = expl_var_batch)
 
-ht_opt$ROW_ANNO_PADDING <- unit(2.5, "mm")
-ht_opt$COLUMN_ANNO_PADDING <- unit(2.5, "mm")
+col_list <- list(patient_group = c("myogenic" = "#FF6666", 
+                                   "ischemic" = "#3CB371", 
+                                   "fibrotic" = "#4169E1"),
+                 batch = c("A" = "black",
+                           "B" = "darkgrey"))
 
-# Association colors
-col_fun_assoc <-  circlize::colorRamp2(seq(0, 20, length = 20), hcl.colors(20,"Purples",rev = T))
-col_fun_r2 <- circlize::colorRamp2(seq(0, 100, length = 50), hcl.colors(50,"Oranges",rev = T))
-col_fun_fact <- circlize::colorRamp2(seq(-5, 5, length = 50), hcl.colors(50,"Green-Brown",rev = T))
-
-#col_fun_r2 <- colorRamp2(c(0, 0.5, 1), c("white", "green"))
-
-row_anns <- get_factors(model, factors = "all")[[1]] %>% 
-  rownames() %>% 
-  enframe(value = "sample") %>% 
-  dplyr::select(sample) %>% 
-  left_join(meta, by = "sample") %>%
-  dplyr::select(patient_group, batch)
-  
-row_ha <- rowAnnotation(condition = row_anns$patient_group,
-                       batch = row_anns$batch,
-                       col = list(condition = c("fibrotic" = "#4169E1",
-                                                    "myogenic" = "#FF6666", 
-                                                    "ischemic" = "#3CB371"),
-                                  batch = c("A" = "black",
-                                            "B" = "darkgrey")),
-                       gap = unit(2.5, "mm"),
-                       border = TRUE)
-
-assoc_pvals <- bind_rows("condition" = -log10(expl_var_pgroup$adj_pvalue),
-                         "batch" = -log10(expl_var_batch$adj_pvalue)) %>%
-  as.matrix()
-
-# Add explain variance per cell-type
-r2_per_factor <- model@cache$variance_explained$r2_per_factor[[1]]
-
-column_ha = HeatmapAnnotation("r2" = r2_per_factor,
-                              "assocs" = assoc_pvals,
-                              gap = unit(2.5, "mm"),
-                              border = TRUE,
-                              col = list(r2 = col_fun_r2,
-                                  assocs = col_fun_assoc))
-
-
-scores_hmap <- Heatmap(get_factors(model, factors = "all")[[1]],
-        name = "factor_scores", 
-        right_annotation = row_ha,
-        top_annotation = column_ha,
-        cluster_columns = FALSE, 
-        show_row_dend = TRUE,
-        show_row_names = FALSE,
-        border = TRUE,
-        gap = unit(2.5, "mm"),
-        col = col_fun_fact)
+scores_hmap <- plot_MOFA_hmap(model = model,
+                group = FALSE,
+                metadata = meta,
+                sample_id_column = "sample",
+                sample_anns = c("patient_group", "batch"),
+                assoc_list = assoc_list,
+               col_rows = col_list)
 
 pdf("./results/MI/MOFA_mcell/MOFAcell_summ.pdf", height = 5, width = 3.7)
 
 draw(scores_hmap)
 
 dev.off()
-
-draw(scores_hmap)
-
 ```
 
 ## Dimensionality reduction
@@ -493,11 +461,12 @@ draw(scores_hmap)
 Finally, to visualize in a 2D scatter plot we use UMAP with all factors
 
 ```{r,fig.height=2.5, fig.width=4.5}
+set.seed(2810)
 # Factor scores per sample:
-factors <- get_factors(model, factors = "all")[[1]] 
+factors <- MOFA2::get_factors(model, factors = "all")[[1]] 
 
 # UMAP of factor
-factors_umap <- uwot::umap(factors, n_neighbors = 7)
+factors_umap <- uwot::umap(factors, n_neighbors = 5)
 colnames(factors_umap) <- c("UMAP_1", "UMAP_2")
 
 factors_umap <- factors_umap %>%
@@ -562,7 +531,7 @@ model@cache$variance_explained$r2_total$single_group %>% mean()
 ### Factors associated with patient group
 ```{r}
 useful_factors <- expl_var_pgroup %>%
-  dplyr::filter(adj_pvalue < 0.05) %>%
+  dplyr::filter(adj_pvalue <= 0.05) %>%
   pull(Factor)
 
 print(useful_factors)
@@ -578,7 +547,7 @@ model@cache$variance_explained$r2_per_factor$single_group[useful_factors,,drop =
 ### Factors associated with batch
 ```{r}
 useful_factors <- expl_var_batch %>%
-  dplyr::filter(adj_pvalue < 0.05) %>%
+  dplyr::filter(adj_pvalue <= 0.05) %>%
   pull(Factor)
 
 print(useful_factors)
