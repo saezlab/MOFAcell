@@ -1,0 +1,425 @@
+---
+title: "Integrating Tissue-level characteristics with MOFA"
+author: "Ricardo Ramirez"
+date: "2023-05-29"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(compositions)
+library(MOFAcellulaR)
+library(MOFA2)
+reticulate::use_condaenv(condaenv = "/Users/ricardoramirez/opt/miniconda3/envs/MOFA")
+```
+
+## Motivation
+
+In previous sections of the manuscript we demonstrated how multicellular programs, estimated solely from single-cell data, can be associated in a post-hoc manner with compositional changes of potential functional cell-states and how these are traceable in spatial transcriptomics data. This proposed application is suitable in analyses integrating independent studies with different type of technologies. However, unlike current available methods, MOFA is able to integrate in its modeling other tissue-level characteristics besides molecular data, such as cellular compositions and spatial organization.
+
+## Results
+
+To showcase how MOFA can be used to jointly analyze the molecular and structural aspects of tissues. We fitted a model to the human myocardial infarction data including the original seven gene expression cell-type views used to identify multicellular programs and four new views incorporating structural aspects of the tissue. The first of these new views incorporated the compositions of the seven cell-types analyzed, and the other three quantified the spatial relationships between these seven cell-types in three different spatial contexts, namely colocalization, local-neighborhood and extended-neighborhood dependencies. 
+
+```{r}
+# The first layer of views in gene expression
+gex_pb <- readRDS("./data_MI/mi_pb_red.rds")
+cts <- gex_pb$view %>% unique()
+```
+
+### Including compositional data
+
+Cell-type compositions of the seven analysed samples across samples were transformed using center-log-ratios using the `compositions` package.
+
+```{r}
+# Builds a view matrix
+view_to_matrix <- function(df) {
+  
+  df %>%
+    pivot_wider(names_from = patient_region_id, 
+                values_from = value) %>%
+    column_to_rownames("feature") %>%
+    as.matrix()
+}
+
+# Builds a view df
+matrix_to_view <- function(mat, view_name) {
+  mat %>%
+    as.data.frame() %>%
+    rownames_to_column("feature") %>%
+    pivot_longer(-feature, names_to = "patient_region_id") %>%
+    mutate(view = view_name)
+}
+
+# Make clr or ilr transformations from a matrix
+build_compositions <- function(df, flavor = "clr") {
+  
+  # Features in columns:
+  # Completes compositions
+  comps <- compositions::acomp(t(df)) 
+  
+  if(flavor == "clr") {
+    
+    lcomp <- clr(comps) %>% as.matrix()
+    colnames(lcomp) <- paste0("clr_", colnames(lcomp))
+    
+  } else if (flavor == "ilr") {
+    
+    lcomp <- ilr(comps) %>% as.matrix()
+    colnames(lcomp) <- paste0("ilr_", seq(1, ncol(lcomp)))
+    
+  } else if (flavor == "alr") {
+    
+    lcomp <- alr(comps) %>% as.matrix()
+    colnames(lcomp) <- paste0("alr_", colnames(lcomp))
+    
+  }
+  
+  return(t(lcomp))
+  
+}
+
+ct_comps <- read_csv("./data_MI/momics_ctcomps.csv", 
+                     show_col_types = FALSE) %>% 
+  dplyr::select(-view) %>% 
+  view_to_matrix() 
+
+# We keep useful cts
+ct_comps <- ct_comps[rownames(ct_comps) %in% cts,]
+
+ct_comps <- ct_comps %>%
+  build_compositions() %>%
+  matrix_to_view(view_name = "clr_comps") %>%
+  dplyr::rename("sample" = "patient_region_id") %>%
+  dplyr::select(view, feature, sample, value)
+```
+
+### Organizational
+
+```{r}
+# The third layer of views are interactions
+
+# Simplify names
+rename_df <- tibble(view = c("spatial_misty_intra", 
+                             "spatial_misty_juxta_5", 
+                             "spatial_misty_para_15"),
+                    view2 = c("sptl_coloc",
+                              "sptl_neigh_local",
+                              "sptl_neigh_ext"))
+
+# Read and prepare
+spatial_ints <- read_csv("./data_MI/spatial_nicheints.csv",
+                         show_col_types = FALSE) %>%
+  dplyr::rename("sample" = "patient_region_id") %>%
+  left_join(rename_df, by = "view") %>%
+  dplyr::mutate(ctA = strsplit(feature, "_to_") %>%
+                  map_chr(., ~.x[[1]]),
+                ctB = strsplit(feature, "_to_") %>%
+                  map_chr(., ~last(.x))) %>%
+  dplyr::filter(ctA %in% cts,
+                ctB %in% cts) %>%
+  dplyr::select(view2, feature, sample, value) %>%
+  dplyr::rename("view" = "view2")
+
+# Work with the 50% most variable interactions across views
+# based on pure variance
+var_selection <- spatial_ints %>%
+  group_by(view, feature) %>%
+  summarize(var_val = var(value)) %>%
+  dplyr::arrange(view, -var_val) %>%
+  dplyr::slice(1:21) %>%
+  ungroup()
+
+spatial_ints <- spatial_ints %>%
+  left_join(var_selection, by = c("view", "feature")) %>%
+  na.omit() %>%
+  dplyr::select(-var_val)
+```
+
+```{r}
+spatial_ints %>%
+  dplyr::select(view, feature) %>%
+  group_by(view) %>%
+  unique() %>%
+  summarize(n())
+```
+
+```{r}
+gex_pb <- gex_pb %>%
+  dplyr::mutate(view = paste0("gex_", view))
+```
+
+## Run MOFA model
+
+```{r}
+# Put all data in a single data frame
+
+multiview_dat <- bind_rows(gex_pb, ct_comps, spatial_ints)
+
+# Fit a MOFA model as before
+
+MOFAobject <- MOFA2::create_mofa(multiview_dat)
+
+data_opts <- MOFA2::get_default_data_options(MOFAobject)
+train_opts <- MOFA2::get_default_training_options(MOFAobject)
+model_opts <- MOFA2::get_default_model_options(MOFAobject)
+
+# This avoids the regularization of multicellular programs per cell type.
+# This avoids less sparse gene weights
+model_opts$spikeslab_weights <- FALSE 
+
+# Define the number of factors needed
+model_opts$num_factors <- 6
+
+# Prepare MOFA model:
+MOFAobject <- MOFA2::prepare_mofa(object = MOFAobject,
+                                  data_options = data_opts,
+                                  model_options = model_opts,
+                                  training_options = train_opts)
+
+outfile <- file.path("./results/MI/mofaplusmodel.hdf5")
+
+model <- MOFA2::run_mofa(MOFAobject, outfile)
+```
+
+Define meta-data
+
+```{r}
+# Defining meta-data for downstream analysis
+annotation_names <- tibble(patient_group = c("group_1", "group_2", "group_3"),
+                           patient_group_name = c("myogenic-enriched", "ischemic-enriched", "fibrotic-enriched"))
+
+batch_info <- read_csv("./data_MI/snrna_batch_ann.csv") %>%
+  select(orig.ident, batch) %>%
+  unique()
+
+meta_data <- read_csv("./data_MI/rna_patient_anns_revisions.csv",show_col_types = F) %>%
+  left_join(annotation_names, by = "patient_group") %>%
+  dplyr::select(-patient_group) %>%
+  dplyr::rename("patient_group" = patient_group_name) %>%
+  dplyr::mutate(patient_group = factor(patient_group, 
+                                       levels = c("myogenic-enriched", "ischemic-enriched", "fibrotic-enriched"))) %>%
+  unique() %>%
+  left_join(batch_info, by = c("sample_id" = "orig.ident")) %>%
+  dplyr::select(patient_region_id, major_labl, patient_group, batch) %>%
+  unique()
+```
+
+## Low embeddding
+
+```{r}
+UMAP_embedding <- MOFAcellulaR::plot_sample_2D(model = model,
+                                               method = "UMAP",
+                                               metadata = meta_data,
+                                               sample_id_column = "patient_region_id",
+                                               color_by = "patient_group")
+```
+
+## Associations
+
+```{r}
+group_assoc <- MOFAcellulaR::get_associations(model = model,
+                                             metadata = meta_data,
+                                             sample_id_column = "patient_region_id",
+                                             test_variable = "patient_group",
+                                             test_type = "categorical",
+                                             categorical_type = "non-parametric",
+                                             group = FALSE)
+group_assoc %>%
+  dplyr::filter(adj_pvalue <= 0.05)
+```
+
+```{r}
+batch_assoc <- MOFAcellulaR::get_associations(model = model,
+                                             metadata = meta_data,
+                                             sample_id_column = "patient_region_id",
+                                             test_variable = "batch",
+                                             test_type = "categorical",
+                                             categorical_type = "non-parametric",
+                                             group = FALSE)
+batch_assoc
+```
+
+## Complex Hmap
+
+```{r}
+assoc_list <- list("group" = group_assoc,
+                   "batch" = batch_assoc)
+
+col_list <- list(patient_group = c("myogenic-enriched" = "#FF6666", 
+                                   "ischemic-enriched" = "#3CB371", 
+                                   "fibrotic-enriched" = "#4169E1"),
+                 batch = c("A" = "black",
+                           "B" = "darkgrey"))
+
+cplx_hmap <- plot_MOFA_hmap(model = model,
+                            group = FALSE,
+                            metadata = meta_data,
+                            sample_id_column = "patient_region_id",
+                            sample_anns = c("patient_group", "batch"),
+                            assoc_list = assoc_list,
+                            col_rows = col_list)
+```
+
+
+```{r}
+pdf("./results/MI/MOFAcellplus_summ.pdf", height = 6.5, width = 4.2)
+
+draw(cplx_hmap)
+
+dev.off()
+```
+
+## Paper stats
+
+### Recovered mean across all samples
+
+```{r}
+R2 <- model@cache$variance_explained$r2_total$single_group 
+R2
+```
+
+```{r}
+R2_gex <- R2[grepl("gex",names(R2))]
+R2_gex %>% mean()
+```
+
+```{r}
+R2_sptl <- R2[grepl("sptl",names(R2))]
+R2_sptl %>% mean()
+```
+
+```{r}
+R2["clr_comps"]
+```
+
+## Interactions
+
+```{r}
+weights <- MOFA2::get_weights(model) %>%
+  map(., ~ .x[,"Factor1"]) %>%
+  map(., ~ enframe(.x)) %>% 
+  enframe(name = "view") %>%
+  unnest() %>%
+  dplyr::filter(view %in% c("clr_comps","sptl_coloc", 
+                            "sptl_neigh_local", "sptl_neigh_ext")) %>%
+  dplyr::mutate(direction = ifelse(value > 0, 
+                                   "ischemic-like", 
+                                   "myogenic-like"),
+                abs_value = abs(value)) %>%
+  dplyr::arrange(view, desc(abs_value)) %>%
+  dplyr::group_by(view) %>%
+  dplyr::slice(1:5) %>%
+  nest() %>%
+  dplyr::mutate(plt = map2(view, data, function(v, dat)
+  {
+    
+    plt_dat <- dat %>%
+      dplyr::mutate(name = gsub(paste0("_",v),"", name)) 
+    
+   plt_dat <- plt_dat %>%
+      dplyr::mutate(name = factor(name,
+                                  levels = plt_dat$name)) 
+    
+     ggplot(plt_dat, aes(y = abs_value, x = name, fill = direction)) +
+      geom_bar(stat = "identity") +
+      theme_classic() +
+      theme(axis.text = element_text(size = 11),
+            axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+            axis.title = element_text(size = 11),
+            legend.position = "none") +
+       ylim(c(0,0.5)) +
+       scale_fill_manual(values = c("#FF6666", "#4169E1")) +
+       ylab("feature weight") +
+       xlab("")
+    
+    
+  }))
+
+weights <- weights %>%
+  dplyr::mutate(view = factor(view, 
+                              levels = c("clr_comps","sptl_coloc",
+                                         "sptl_neigh_local", "sptl_neigh_ext"))) %>%
+  arrange(view)
+    
+plts <- weights$plt    
+
+feature_weight_plt <- cowplot::plot_grid(plotlist = plts, nrow = 1, align = "hv") 
+
+feature_weight_plt
+
+pdf("./results/MI/MOFAcellplus_weights.pdf", height = 3.3, width = 7.7)
+
+plot(feature_weight_plt)
+
+dev.off()
+```
+
+
+
+```{r}
+MOFA2::plot_top_weights(model, view = "clr_comps")
+```
+
+```{r}
+comps <- MOFA2::plot_top_weights(model, view = "clr_comps", nfeatures = 7)
+```
+
+```{r}
+coloc <- MOFA2::plot_top_weights(model, view = c("sptl_coloc"), scale = FALSE,nfeatures = 5)
+ext <- MOFA2::plot_top_weights(model, view = "sptl_neigh_ext", nfeatures = 5)
+local <- MOFA2::plot_top_weights(model, view = "sptl_neigh_local", nfeatures = 5) +
+  theme(axis.text = element_text(size = 10))
+```
+
+```{r}
+coloc
+```
+
+
+
+## Correlation with simpler model
+
+```{r}
+basic_model_outfile <- "./results/MI/MOFA_mcell/MI_model6factors.hdf5"
+basic_model <- MOFA2::load_model(basic_model_outfile)
+basic_factors <- MOFA2::get_factors(basic_model)[[1]]
+basic_weights <- MOFAcellulaR::get_geneweights(model = basic_model,factor = "Factor1") %>%
+  dplyr::rename("value_basic" = "value")
+```
+
+```{r}
+model_weights <- MOFA2::get_weights(model, as.data.frame = T) %>% 
+        base::as.data.frame() %>%
+  dplyr::filter(grepl("gex", view),
+                factor == "Factor1") %>%
+  dplyr::mutate(feature = strsplit(as.character(feature), 
+        "_") %>% map_chr(., ~.x[[2]]), 
+        ctype = strsplit(as.character(view), 
+        "_") %>% map_chr(., ~.x[[2]])) %>% 
+  dplyr::rename(factors = factor) %>%
+  dplyr::select(feature, value, ctype)
+```
+
+```{r}
+left_join(model_weights, 
+          basic_weights, 
+          by = c("ctype", "feature")) %>%
+  dplyr::group_by(ctype) %>%
+  summarise(cor_weights = cor(value, value_basic))
+```
+
+## Correlation of factor scores
+
+```{r}
+
+cor(MOFA2::get_factors(basic_model)[[1]],
+    MOFA2::get_factors(model)[[1]]) %>%
+  diag()
+
+```
+
+
