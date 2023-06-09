@@ -78,7 +78,7 @@ multiview_dat <- MOFAcellulaR::create_init_exp(counts = pbcounts,
                           counts_col = "cell_counts", # This refers to the column name in testcoldata where the number of cells per profile was stored
                           ct_col = "cell_type") %>%
   MOFAcellulaR::filt_gex_byexpr(pb_dat_list = .,
-                                min.count = 100,
+                                min.count = 10,
                                 min.prop = 0.25) %>%
   MOFAcellulaR::tmm_trns(pb_dat_list = .,
                          scale_factor = 1000000) %>%
@@ -86,6 +86,16 @@ multiview_dat <- MOFAcellulaR::create_init_exp(counts = pbcounts,
                                prior_hvg = NULL,
                                var.threshold = 0) %>%
   MOFAcellulaR::pb_dat2MOFA(pb_dat_list = .)
+```
+
+```{r}
+multiview_dat %>% 
+  dplyr::select(view, feature) %>% 
+  unique() %>% 
+  group_by(view) %>% 
+  summarize(n_genes = n()) %>% 
+  pull(n_genes) %>%
+  median()
 ```
 
 ## Running MOFA
@@ -142,6 +152,7 @@ stim_assoc <- MOFAcellulaR::get_associations(model = model,
                                        sample_id_column = "sample",
                                        test_variable = "condition",
                                        test_type = "categorical",
+                                      categorical_type = "non-parametric",
                                        group = FALSE)
 
 stim_assoc
@@ -150,19 +161,46 @@ stim_assoc
 ```{r}
 assoc_list <- list("stimuli" = stim_assoc)
 
+col_list <- list(condition = c("stim" = "#FF6666", 
+                                   "ctrl" = "#4169E1"))
+
 cplx_hmap <- plot_MOFA_hmap(model = model,
                 group = FALSE,
                 metadata = metadata,
                 sample_id_column = "sample",
                 sample_anns = c("condition"),
-                assoc_list = assoc_list)
+                assoc_list = assoc_list,
+                col_rows = col_list)
 
 draw(cplx_hmap)
 
-pdf("./results/lupus/lupus_summary.pdf", height = 5, width = 4)
+pdf("./results/lupus/lupus_summary.pdf", height = 4.7, width = 3.4)
 
 draw(cplx_hmap)
 
 dev.off()
 ```
+
+## paper results
+
+Total explained variance
+
+```{r}
+model@cache$variance_explained$r2_total$single_group %>% mean()
+```
+
+```{r}
+model@cache$variance_explained$r2_total$single_group %>% sort()
+```
+First factor
+
+```{r}
+model@cache$variance_explained$r2_per_factor$single_group[1, ] %>% mean()
+```
+
+
+
+
+
+
 
