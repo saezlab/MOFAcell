@@ -172,63 +172,26 @@ We will associate clinical covariates to factor scores. For each factor score, w
 In this specific case we will identify which factors associate with the histological description
 
 ```{r}
-get_allfscores <- function(model, meta, factor) {
-  
-  factor_scores <- rbind(get_factors(model, factors = "all", groups = "all")[[1]],
-                     get_factors(model, factors = "all", groups = "all")[[2]]) %>%
-    as.data.frame() %>%
-    rownames_to_column("sample") %>%
-    left_join(meta, by = "sample")  %>%
-    pivot_longer(-colnames(meta), names_to = "Factor")
-  
-  return(factor_scores)
-  
-}
-```
+all_meta <- all_meta %>%
+  dplyr::mutate(HF = ifelse(disease == "NF", "no", "yes"))
 
-
-```{r}
-get_associated_factors <- function(meta, model, predicted_label) {
-  
-  factors <- get_allfscores(model = model, meta = meta)
-  
-  # Get factors associated with patient group
-  factors <- factors %>%
-  dplyr::select_at(c("sample", predicted_label, "Factor", "value")) %>%
-  na.omit() %>%
-  group_by(Factor) %>%
-  nest() %>%
-  mutate(pvalue = map(data, function(dat) {
-    
-    gene_aov <- aov(as.formula(paste0("value ~ ", predicted_label)), data = dat) %>%
-      broom::tidy() %>%
-      dplyr::filter(term == predicted_label) %>%
-      dplyr::select(term, p.value)
-    
-    return(gene_aov)
-  })) %>%
-  tidyr::unnest(pvalue) %>%
-  dplyr::ungroup() %>%
-  dplyr::mutate(adj_pvalue = p.adjust(p.value))
-
-  expl_var <- factors %>%
-  dplyr::select(Factor, term, p.value, adj_pvalue)
-
-  return(expl_var)
-  
-}
-```
-
-```{r}
-expl_var_pgroup <- get_associated_factors(meta = all_meta,model = model,
-                                          predicted_label = "disease")
-
+expl_var_pgroup <- MOFAcellulaR::get_associations(model = model,
+                                       metadata = all_meta,
+                                        sample_id_column = "sample",
+                                        test_variable = "disease",
+                                        test_type = "categorical",
+                                        categorical_type = "non-parametric",
+                                        group = TRUE)
 expl_var_pgroup
+
+expl_var_pgroup %>%
+  dplyr::filter(adj_pvalue <= 0.05)
 ```
 
 ```{r}
-stat.test <- get_allfscores(model = model, meta = all_meta) %>%
-  dplyr::filter(Factor %in% c("Factor1")) %>%
+stat.test <- MOFAcellulaR::get_tidy_factors(model = model, meta = all_meta, 
+                                            group = TRUE, factor = "all") %>%
+    dplyr::filter(Factor %in% c("Factor1")) %>%
   dplyr::mutate(HF = ifelse(disease == "NF", "NF", "HF")) %>%
   ggpubr::compare_means(formula = value ~ HF, 
                         group.by = "group")
@@ -237,8 +200,9 @@ print(stat.test)
 ```
 
 ```{r}
-stat.test <- get_allfscores(model = model, meta = all_meta) %>%
-  dplyr::filter(Factor %in% c("Factor2")) %>%
+stat.test <- MOFAcellulaR::get_tidy_factors(model = model, meta = all_meta, 
+                                            group = TRUE, factor = "all") %>%
+    dplyr::filter(Factor %in% c("Factor2")) %>%
   dplyr::mutate(HF = ifelse(disease == "NF", "NF", "HF")) %>%
   ggpubr::compare_means(formula = value ~ HF, 
                         group.by = "group")
@@ -247,8 +211,9 @@ print(stat.test)
 ```
 
 ```{r}
-stat.test <- get_allfscores(model = model, meta = all_meta) %>%
-  dplyr::filter(Factor %in% c("Factor3")) %>%
+stat.test <- MOFAcellulaR::get_tidy_factors(model = model, meta = all_meta, 
+                                            group = TRUE, factor = "all") %>%
+    dplyr::filter(Factor %in% c("Factor4")) %>%
   dplyr::mutate(HF = ifelse(disease == "NF", "NF", "HF")) %>%
   ggpubr::compare_means(formula = value ~ HF, 
                         group.by = "group")
@@ -258,10 +223,11 @@ print(stat.test)
 
 
 ```{r}
-pdf("./results/META/FactorScores_HFbox.pdf", height = 3, width = 2.5)
+pdf("./results/META/FactorScores_HFbox.pdf", height = 2.5, width = 2.5)
 
-plt_box <- get_allfscores(model = model, meta = all_meta) %>%
-  dplyr::filter(Factor %in% c("Factor1")) %>%
+plt_box <- MOFAcellulaR::get_tidy_factors(model = model, meta = all_meta, 
+                                            group = TRUE, factor = "all") %>%
+    dplyr::filter(Factor %in% c("Factor1")) %>%
   dplyr::mutate(HF = ifelse(disease == "NF", "NF", "HF")) %>%
   ggplot(aes(x = group, y = value, fill = HF)) +
   geom_boxplot() +
@@ -279,7 +245,10 @@ dev.off()
 ```
 
 ```{r}
-get_allfscores(model = model, meta = all_meta) %>%
+pdf("./results/META/FactorScores_HFbox_B.pdf", height = 2.5, width = 2.5)
+
+plt_box <- MOFAcellulaR::get_tidy_factors(model = model, meta = all_meta, 
+                                            group = TRUE, factor = "all") %>%
   dplyr::filter(Factor %in% c("Factor2")) %>%
   dplyr::mutate(HF = ifelse(disease == "NF", "NF", "HF")) %>%
   ggplot(aes(x = group, y = value, fill = HF)) +
@@ -289,14 +258,18 @@ get_allfscores(model = model, meta = all_meta) %>%
   theme(axis.text = element_text(size = 12),
         axis.title = element_text(size = 12),
         axis.text.x = element_text(angle = 90, hjust = 1, vjust =0.5)) +
-  ylab("Factor 1 score") +
+  ylab("Factor 2 score") +
   xlab("Study")
 
+plot(plt_box)
+
+dev.off()
 ```
 
 ```{r}
-get_allfscores(model = model, meta = all_meta) %>%
-  dplyr::filter(Factor %in% c("Factor3")) %>%
+MOFAcellulaR::get_tidy_factors(model = model, meta = all_meta, 
+                                            group = TRUE, factor = "all") %>%
+  dplyr::filter(Factor %in% c("Factor4")) %>%
   dplyr::mutate(HF = ifelse(disease == "NF", "NF", "HF")) %>%
   ggplot(aes(x = group, y = value, fill = HF)) +
   geom_boxplot() +
@@ -305,13 +278,13 @@ get_allfscores(model = model, meta = all_meta) %>%
   theme(axis.text = element_text(size = 12),
         axis.title = element_text(size = 12),
         axis.text.x = element_text(angle = 90, hjust = 1, vjust =0.5)) +
-  ylab("Factor 1 score") +
+  ylab("Factor 4 score") +
   xlab("Study")
-
 ```
 
 ```{r, fig.height=3, fig.width=4.5}
-score_plt <- get_allfscores(model = model, meta = all_meta) %>%
+score_plt <- MOFAcellulaR::get_tidy_factors(model = model, meta = all_meta, 
+                                            group = TRUE, factor = "all") %>%
   dplyr::filter(Factor %in% c("Factor1", "Factor2")) %>%
   pivot_wider(names_from = Factor, values_from = value) %>%
   ggplot(., aes(x = Factor1,
@@ -335,22 +308,54 @@ dev.off()
 ```
 
 ```{r}
-expl_var_sex <- get_associated_factors(meta = all_meta,
-                                       model = model,
-                                       predicted_label = "sex")
+expl_var_sex <- MOFAcellulaR::get_associations(model = model,
+                                       metadata = all_meta,
+                                        sample_id_column = "sample",
+                                        test_variable = "sex",
+                                        test_type = "categorical",
+                                        categorical_type = "non-parametric",
+                                        group = TRUE)
 expl_var_sex
 ```
 
 ```{r}
-expl_var_study <- get_associated_factors(meta = all_meta,
-                                         model = model,
-                                         predicted_label = "group")
+expl_var_study <- MOFAcellulaR::get_associations(model = model,
+                                       metadata = all_meta,
+                                        sample_id_column = "sample",
+                                        test_variable = "group",
+                                        test_type = "categorical",
+                                        categorical_type = "non-parametric",
+                                        group = TRUE)
 expl_var_study
 ```
 
 ## Explained variance per factor and summary heatmap
 
 We recover the explained variance per view per factor to evaluate if coordinated gene expression processes are coordinated between all the cell types or exclusive to only a group of them
+
+```{r}
+assoc_list <- list(HF = expl_var_pgroup, 
+                   study = expl_var_study,
+                   sex = expl_var_sex)
+
+col_list <- list(disease = c("ARVC" = "lightblue",
+                                                    "NF" = "#FF6666", 
+                                                    "HCM" = "#4169E1",
+                                                    "DCM"= "#3CB371",
+                                                    "NCC" = "pink"),
+                                  group = c("Chaffin2022" = "black",
+                                            "Reichart2022" = "darkgrey"))
+
+scores_hmap <- MOFAcellulaR::plot_MOFA_hmap(model = model,
+                group = TRUE,
+                metadata = all_meta,
+                sample_id_column = "sample",
+                sample_anns = c("disease", "group"),
+                assoc_list = assoc_list,
+               col_rows = col_list)
+```
+
+
 
 ```{r, fig.height=8, fig.width=3.5}
 
