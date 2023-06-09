@@ -45,7 +45,7 @@ cor_tile <- ggplot(corr_scores, aes(x = name, y = ctype, fill = p_corr)) +
   geom_tile(color = "white") +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
-        axis.text = element_text(size = 11),
+        axis.text = element_text(size = 12),
         plot.margin = unit(c(0, 0, 0, 0), "cm")) +
   coord_equal() +
   scale_fill_gradient2(high = "darkred", low = "white") +
@@ -108,7 +108,7 @@ prop_sign %>%
 ```{r}
 panel <- cowplot::plot_grid(cor_tile, prop_tile, align = "hv", ncol = 2)
 
-pdf("./results/MI/comparison_degs.pdf", height = 4, width = 6)
+pdf("./results/MI/comparison_degs.pdf", height = 3.6, width = 5.5)
 
 plot(panel)
 

@@ -157,9 +157,8 @@ cplx_hmap <- plot_MOFA_hmap(model = model,
 
 draw(cplx_hmap)
 
-pdf("./results/lupus/lupus_summary.pdf", height = 5, width = 4)
+MOFA2::plot_top_weights(model, view = "clr_comps")
 
-draw(cplx_hmap)
+MOFA2::plot_top_weights(model, view = "clr_comps")
 
-dev.off()
 
