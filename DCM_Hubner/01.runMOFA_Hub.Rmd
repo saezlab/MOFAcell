@@ -19,8 +19,7 @@ library(edgeR)
 library(circlize)
 library(compositions)
 library(biomaRt)
-source("./MOFAcell/MOFAcellprep.R")
-source("./MOFAcell/factorutils.R")
+library(MOFAcellulaR)
 ```
 
 ```{r, echo=FALSE}
@@ -63,112 +62,13 @@ coldat <- read_csv("./data_DCMACM_Science/pb_coldata.csv",
   dplyr::mutate(cell_type = strsplit(colname,"_") %>%
                   map_chr(., ~ .x %>% last())) %>%
   column_to_rownames("colname") %>%
-  dplyr::rename(ncells = "counts")
+  dplyr::rename(cell_counts = "counts")
 
 meta <- sample_dict_red %>%
   dplyr::rename("sample" = "donor_id")
 ```
 
-# What happens if we fit a PCA to the compositions?
-
-```{r}
-comp_mat <- coldat %>%
-  group_by(donor_id) %>%
-  mutate(total_cells = sum(ncells)) %>%
-  group_by(donor_id, cell_type) %>%
-  summarize(cprop = ncells/total_cells) %>%
-  pivot_wider(names_from = cell_type, 
-              values_from = cprop,
-              values_fill = 0) %>%
-  column_to_rownames("donor_id") %>%
-  as.matrix()
-
-comps_pca <- comp_mat[, colnames(comp_mat) != "none"] %>%
-  compositions::acomp() %>%
-  compositions::clr() %>%
-  prcomp()
-
-expl_var_pc <- summary(comps_pca)
-expl_var_pc <- expl_var_pc$importance[2,] %>% 
-  enframe(name = "PC", value = "prop.var")
-```
-
-```{r}
-comps_pca <- comps_pca$x %>%
-  as.data.frame() %>%
-  rownames_to_column("sample") %>%
-  pivot_longer(-sample,names_to = "PC") %>%
-  left_join(meta, by = "sample")
-```
-
-# Associate PC with variables of interes
-
-```{r}
-assoc_comps <- function(comps_pca_dat, predicted_label) {
-  
-  comps_pca %>%
-    group_by(PC) %>%
-    nest() %>%
-  mutate(pvalue = map(data, function(dat) {
-    
-    gene_aov <- aov(as.formula(paste0("value ~ ", predicted_label)), data = dat) %>%
-      broom::tidy() %>%
-      dplyr::filter(term == predicted_label) %>%
-      dplyr::select(term, p.value)
-    
-    return(gene_aov)
-  })) %>%
-    dplyr::select(PC, pvalue) %>%
-    unnest() %>%
-    dplyr::ungroup() %>%
-    dplyr::mutate(p_adj = p.adjust(p.value)) %>%
-    left_join(expl_var_pc, by = "PC")
-  
-}
-```
-
-```{r}
-assoc_comps(comps_pca_dat = comps_pca,
-            predicted_label = "disease") %>%
-  dplyr::filter(p_adj < 0.05)
-
-assoc_comps(comps_pca_dat = comps_pca,
-            predicted_label = "disease") %>%
-  dplyr::filter(p_adj < 0.05) %>%
-  dplyr::pull(prop.var) %>%
-  sum
-```
-
-```{r}
-assoc_comps(comps_pca_dat = comps_pca,
-            predicted_label = "sex") %>%
-  dplyr::filter(p_adj < 0.05)
-
-assoc_comps(comps_pca_dat = comps_pca,
-            predicted_label = "sex") %>%
-  dplyr::filter(p_adj < 0.05) %>%
-  dplyr::pull(prop.var) %>%
-  sum
-```
-
 # Now run MOFAcell
-
-```{r, eval = T, echo= TRUE}
-pb_dat <- SummarizedExperiment(assays = list("counts" = pb_data[,rownames(coldat)]), 
-                               colData = DataFrame(coldat))
-```
-
-Finally prepare the data for the universal input of MOFAcell preprocessing
-
-```{r, eval=T, echo=F}
-counts <- assay(pb_dat, "counts")
-
-coldata <- colData(pb_dat) %>%
-  as.data.frame() %>%
-  dplyr::rename("cell_counts" = "ncells") 
-
-colnames(counts) <- rownames(coldata)
-```
 
 Defining background genes
 
@@ -191,27 +91,30 @@ mrkr_genes <- mrkr_genes %>% #dplyr::filter(!name %in% exclude_ct) %>%
 # Define views of interest in ct
 exclude_ct <- c("Mast", "Neuronal", "prolif", "Adipo", "none")
 
-cts <- coldata$cell_type %>%
+cts <- coldat$cell_type %>%
   unique()
 
 cts <- cts[! cts %in% exclude_ct]
 
 # Do all processing of counts matrices
-pb_dat <- create_init_exp(counts = counts,
-                          coldata = coldata) %>%
-  filt_profiles(pb_dat = .,
-                ncells = 25,
-                cts = cts) %>%
-  filt_gex_byexpr(pb_dat_list = .,
-                  min.count = 10,
-                  min.prop = 0.85) %>%
-  tmm_trns(pb_dat_list = .) %>%
-  filt_gex_byhvg(pb_dat_list = .,
-                 prior_hvg = NULL,
-                 var.threshold = 0) %>%
-  filt_gex_bybckgrnd(pb_dat_list = ., 
-                     prior_mrks = mrkr_genes) %>%
-  pb_dat2MOFA(pb_dat_list = .)
+pb_dat <- MOFAcellulaR::create_init_exp(counts = pb_data[,rownames(coldat)],  
+                                               coldata = coldat) %>%
+  MOFAcellulaR::filt_profiles(pb_dat = .,
+                          cts = cts,
+                          ncells = 25,
+                          counts_col = "cell_counts", 
+                          ct_col = "cell_type") %>%
+  MOFAcellulaR::filt_gex_byexpr(pb_dat_list = .,
+                                min.count = 100,
+                                min.prop = 0.25) %>%
+  MOFAcellulaR::tmm_trns(pb_dat_list = .,
+                         scale_factor = 1000000) %>%
+  MOFAcellulaR::filt_gex_byhvg(pb_dat_list = .,
+                               prior_hvg = NULL,
+                               var.threshold = 0) %>%
+  MOFAcellulaR::filt_gex_bybckgrnd(pb_dat_list = .,
+                                   prior_mrks = mrkr_genes) %>%
+  MOFAcellulaR::pb_dat2MOFA(pb_dat_list = .)
 
 ```
 
@@ -241,6 +144,8 @@ data_opts <- get_default_data_options(MOFAobject)
 model_opts <- get_default_model_options(MOFAobject)
 
 model_opts$num_factors <- 6
+
+model_opts$spikeslab_weights <- FALSE
 
 train_opts <- get_default_training_options(MOFAobject)
 
@@ -298,144 +203,101 @@ get_associated_factors <- function(meta, model, predicted_label) {
 }
 ```
 
-# HF vs NF
+# All etiologies
 
 ```{r}
-meta <- sample_dict_red %>%
-  dplyr::rename("sample" = "donor_id")
+meta <- meta %>%
+  dplyr::mutate(HF = ifelse(dis_code == "NF", "no", "yes"))
 
-expl_var_pgroup <- get_associated_factors(meta = meta,model = model,predicted_label = "disease")
+expl_var_pgroup <- MOFAcellulaR::get_associations(model = model,
+                                       metadata = meta,
+                                        sample_id_column = "sample",
+                                        test_variable = "dis_code",
+                                        test_type = "categorical",
+                                        categorical_type = "non-parametric",
+                                        group = FALSE)
+
 expl_var_pgroup
 ```
 
-```{r, fig.height=2.5, fig.width=4}
-get_allfscores(model = model, meta = meta) %>%
-  dplyr::filter(Factor %in% c("Factor1", "Factor3")) %>%
-  pivot_wider(names_from = Factor, values_from = value) %>%
-  ggplot(., aes(x = Factor1,
-                y = Factor3,
-                color = dis_code)) +
-  geom_point(size = 2) +
-  theme_classic() +
-  theme(axis.text = element_text(size =12))
+# HF only
+
+```{r}
+expl_var_HF <- MOFAcellulaR::get_associations(model = model,
+                                       metadata = meta,
+                                        sample_id_column = "sample",
+                                        test_variable = "HF",
+                                        test_type = "categorical",
+                                        categorical_type = "non-parametric",
+                                        group = FALSE)
+
+expl_var_HF
+
+expl_var_HF %>%
+  dplyr::filter(adj_pvalue <= 0.05)
 ```
 
 # Genetic variants
 
 ```{r}
-expl_var_gen <- get_associated_factors(meta = meta %>%
-                                            dplyr::filter(!Primary.Genetic.Diagnosis %in% c("control")),
-                                                          model = model,
-                                      predicted_label = "Primary.Genetic.Diagnosis")
+expl_var_gen <- MOFAcellulaR::get_associations(model = model,
+                                       metadata = meta %>%
+                                         dplyr::filter(!Primary.Genetic.Diagnosis %in% c("control")),
+                                        sample_id_column = "sample",
+                                        test_variable = "Primary.Genetic.Diagnosis",
+                                        test_type = "categorical",
+                                        categorical_type = "non-parametric",
+                                        group = FALSE)
+  
 expl_var_gen
-```
 
-```{r, fig.height=3, fig.width=4.5}
-get_allfscores(model = model, meta = meta) %>%
-  dplyr::filter(Factor %in% c("Factor3", "Factor5"),
-                !Primary.Genetic.Diagnosis %in% c("control")) %>%
-  pivot_wider(names_from = Factor, values_from = value) %>%
-  ggplot(., aes(x = Primary.Genetic.Diagnosis,
-                y = Factor3)) +
-  geom_boxplot() +
-  geom_point(size = 2) +
-  theme_classic() +
-  theme(axis.text = element_text(size =12),
-        axis.text.x = element_text(angle = 90, hjust = 1, vjust =0.5)) 
+expl_var_gen %>%
+  dplyr::filter(adj_pvalue <= 0.05)
 ```
 
 # Sex
 
 ```{r}
-expl_var_sex<- get_associated_factors(meta = meta,
-                                      model = model,
-                                      predicted_label = "sex")
+expl_var_sex<- MOFAcellulaR::get_associations(model = model,
+                                       metadata = meta ,
+                                        sample_id_column = "sample",
+                                        test_variable = "sex",
+                                        test_type = "categorical",
+                                        categorical_type = "non-parametric",
+                                        group = FALSE)
 expl_var_sex
-```
-
-```{r, fig.height=3, fig.width=4.5}
-get_allfscores(model = model, meta = meta) %>%
-  dplyr::filter(Factor %in% c("Factor1", "Factor6"),
-                !Primary.Genetic.Diagnosis %in% c("control")) %>%
-  pivot_wider(names_from = Factor, values_from = value) %>%
-  ggplot(., aes(x = sex,
-                y = Factor6)) +
-  geom_boxplot() +
-  geom_point(size = 2) +
-  theme_classic() +
-  theme(axis.text = element_text(size =12),
-        axis.text.x = element_text(angle = 90, hjust = 1, vjust =0.5)) 
 ```
 
 ## Explained variance per factor and summary heatmap
 
 We recover the explained variance per view per factor to evaluate if coordinated gene expression processes are coordinated between all the cell types or exclusive to only a group of them
 
-```{r, fig.height=10, fig.width=5}
-ht_opt$ROW_ANNO_PADDING <- unit(2.5, "mm")
-ht_opt$COLUMN_ANNO_PADDING <- unit(2.5, "mm")
+```{r}
+assoc_list <- list(HF = expl_var_HF, 
+                   gen = expl_var_gen,
+                   sex = expl_var_sex)
 
-# Association colors
-col_fun_assoc <-  circlize::colorRamp2(seq(0, 20, length = 20), hcl.colors(20,"Purples",rev = T))
-col_fun_r2 <- circlize::colorRamp2(seq(0, 100, length = 50), hcl.colors(50,"Oranges",rev = T))
-col_fun_fact <- circlize::colorRamp2(seq(-5, 5, length = 50), hcl.colors(50,"Green-Brown",rev = T))
-
-# Make the heatmap similar to scITD
-row_anns <- get_factors(model, factors = "all")[[1]] %>% 
-  rownames() %>% 
-  enframe() %>% 
-  dplyr::select(value) %>% 
-  left_join(sample_dict_red, by = c("value" = "donor_id")) %>%
-  dplyr::select(dis_code, sex)
-
-row_ha <- rowAnnotation(patient_group = row_anns$dis_code,
-                       sex = row_anns$sex,
-                       col = list(patient_group = c("ARVC" = "lightblue",
+col_list <- list(dis_code = c("ARVC" = "lightblue",
                                                     "NF" = "#FF6666", 
                                                     "DCM"= "#3CB371",
                                                     "NCC" = "pink"),
                                   sex = c("male" = "black",
-                                            "female" = "darkgrey")),
-                       gap = unit(2.5, "mm"),
-                       border = TRUE)
+                                            "female" = "darkgrey"))
+
+scores_hmap <- MOFAcellulaR::plot_MOFA_hmap(model = model,
+                group = FALSE,
+                metadata = meta,
+                sample_id_column = "sample",
+                sample_anns = c("dis_code", "sex"),
+                assoc_list = assoc_list,
+               col_rows = col_list)
 
 
-assoc_pvals <- bind_rows("disease" = -log10(expl_var_pgroup$adj_pvalue),
-                         "genetics" = -log10(expl_var_gen$adj_pvalue),
-                         "sex" = -log10(expl_var_sex$adj_pvalue)) %>%
-  as.matrix()
-
-# Add explain variance per cell-type
-r2_per_factor <- model@cache$variance_explained$r2_per_factor[[1]]
-
-column_ha <- HeatmapAnnotation("r2" = r2_per_factor,
-                              "assocs" = assoc_pvals,
-                              gap = unit(2.5, "mm"),
-                              border = TRUE,
-                              col = list(r2 = col_fun_r2,
-                                  assocs = col_fun_assoc))
-
-
-scores_hmap <- Heatmap(get_factors(model, factors = "all")[[1]], 
-        name = "factor_scores", 
-        right_annotation = row_ha,
-        top_annotation = column_ha,
-        cluster_columns = FALSE, 
-        show_row_dend = TRUE,
-        show_row_names = FALSE,
-        border = TRUE,
-        gap = unit(2.5, "mm"),
-        col = col_fun_fact)
-
-scores_hmap
-
-pdf("./results/DCM_hubner/MOFA_mcell/MOFAcell_summ.pdf", height = 5, width = 3.7)
+pdf("./results/DCM_hubner/MOFA_mcell/MOFAcell_summ.pdf", height = 5, width = 3.5)
 
 draw(scores_hmap)
 
 dev.off()
-
-draw(scores_hmap)
 ```
 
 ## Paper stats
@@ -446,9 +308,9 @@ model@cache$variance_explained$r2_total$single_group
 model@cache$variance_explained$r2_total$single_group %>% mean()
 ```
 
-### Factors associated with patient group
+### Factors associated with HF
 ```{r}
-useful_factors <- expl_var_pgroup %>%
+useful_factors <- expl_var_HF %>%
   dplyr::filter(adj_pvalue < 0.05) %>%
   pull(Factor)
 
@@ -460,33 +322,5 @@ model@cache$variance_explained$r2_per_factor$single_group[useful_factors,,drop =
 model@cache$variance_explained$r2_per_factor$single_group[useful_factors,,drop = F] %>%
   colSums() %>%
   mean()
-```
-
-### Reduced dimensions
-
-```{r}
-# Factor scores per sample:
-factors <- get_factors(model, factors = "all")[[1]] 
-
-# UMAP of factor
-factors_umap <- uwot::umap(factors, n_neighbors = 6)
-colnames(factors_umap) <- c("UMAP_1", "UMAP_2")
-
-factors_umap <- factors_umap %>%
-  as.data.frame() %>%
-  rownames_to_column("donor_id") %>%
-  left_join(sample_dict_red, by = "donor_id")
-
-```
-
-```{r}
-umap_plt <- ggplot(factors_umap, aes(x = UMAP_1, 
-                                     y = UMAP_2, 
-                                     color = dis_code)) +
-  geom_point(size = 2) +
-  theme_classic() +
-  theme(axis.text = element_text(size =12))
-
-plot(umap_plt)
 ```
 
