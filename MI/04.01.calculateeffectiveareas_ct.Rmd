@@ -139,6 +139,8 @@ area_summ <- map(samples, process_modules, sd_thrsh = 2, msk_thrsh = 0.1) %>%
                               gsub("_pos", "_disease", name)))
 
 write.csv(area_summ, "./results/MI/MOFA_mcell/factor_desc/Factor1_char/spatial_summ.csv")
+
+area_summ %>% group_by(name, patient_group_name) %>% summarize(n()) %>% print(n = 50)
 ```
 
 ## Areas with "cell-type" program
@@ -205,11 +207,17 @@ dev.off()
 ```{r}
 stat.test = area_summ %>%
   ggpubr::compare_means(formula = w_area ~ patient_group_name, 
-                        group.by = "name", method = "t.test")
+                        group.by = "name", method = "wilcox.test")
 
 stat.test %>%
   dplyr::filter(p.adj < 0.05)
 ```
+
+```{r}
+stat.test %>%
+  dplyr::filter(p.adj < 0.1)
+```
+
 
 ```{r, fig.width=5, height = 9}
 plt_sum <- area_summ %>%

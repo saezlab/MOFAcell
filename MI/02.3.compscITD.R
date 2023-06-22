@@ -134,7 +134,7 @@ batch_sw %>% group_by(batch) %>%
   nest() %>%
   dplyr::mutate(comp_sw = map(data, function(dat) {
     
-    t.test(sil_width ~ method, dat) %>%
+    wilcox.test(sil_width ~ method, dat) %>%
       broom::tidy() %>%
       dplyr::select(p.value)
     
@@ -184,7 +184,7 @@ patient_sw %>% group_by(patient_group) %>%
   nest() %>%
   dplyr::mutate(comp_sw = map(data, function(dat) {
     
-    t.test(sil_width ~ method, dat) %>%
+    wilcox.test(sil_width ~ method, dat) %>%
       broom::tidy() %>%
       dplyr::select(p.value)
     

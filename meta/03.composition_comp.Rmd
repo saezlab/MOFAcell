@@ -120,7 +120,7 @@ draw(scores_hmap)
 dev.off()
 ```
 
-Here we perform differences between HF vs NF using t-tests
+Here we perform differences between HF vs NF using wilcoxon-tests
 
 ```{r}
 ct_ds <- reheat_comps %>%
@@ -130,19 +130,29 @@ ct_ds <- reheat_comps %>%
   nest() %>%
   mutate(ds_t = map(data, function(dat) {
     
-    t.test(comps ~ HeartFailure, data = dat) %>%
-      broom::tidy()
+    mean_scores <- dat %>%
+      group_by(HeartFailure) %>%
+      summarize(mean_score = mean(comps)) %>%
+      pivot_wider(names_from = HeartFailure,values_from = mean_score)
+    
+    # Sign of the difference between the means
+    sign_diff <-  mean_scores[,"yes"] - mean_scores[,"no"]
+    
+    wilcox.test(comps ~ HeartFailure, data = dat) %>%
+      broom::tidy() %>%
+      mutate(mean_diff = sign(sign_diff[[1]]))
     
   }))
 
 ct_ds_stat <- ct_ds %>%
   dplyr::select(name, ds_t) %>%
   unnest() %>%
-  arrange(-statistic) %>%
+  #arrange(-statistic) %>%
   group_by(name) %>%
   dplyr::mutate(p_adj = p.adjust(p.value)) %>%
-  dplyr::select(ct, name, statistic, estimate, p.value, p_adj) %>%
-  dplyr::mutate(significance = ifelse(p_adj <= 0.1, "*", ""))
+  dplyr::select(ct, name, mean_diff, p.value, p_adj) %>%
+  dplyr::mutate(significance = ifelse(p_adj <= 0.1, "*", "")) %>%
+  dplyr::mutate(significance = ifelse(p_adj <= 0.05, "**", ""))
 
 saveRDS(ct_ds_stat, "./results/META/clr_comps_hftest.rds")
 ```
@@ -154,44 +164,47 @@ mofacell_deconv_stats <- readRDS("./results/META/mofacell_ds_hftest.rds")
 
 all_stats <- mofacell_deconv_stats %>%
   dplyr::select(source, name, 
-                statistic, p_adj,
+                mean_diff, p_adj,
                 significance) %>%
-  dplyr::rename("ds_statistic" = "statistic",
+  dplyr::rename("ds_mean_diff" = "mean_diff",
                 "ds_p_adj" = "p_adj",
                 "ds_significance" = "significance",
                 "ct" = "source") %>%
   left_join(ct_ds_stat %>%
             dplyr::select(ct, name, 
-                statistic, p_adj,
-                significance), by = c("ct", "name"))
+                mean_diff, p_adj,
+                significance), by = c("ct", "name")) %>%
+  dplyr::mutate(mean_diff = factor(mean_diff),
+                ds_mean_diff = factor(ds_mean_diff))
+
 ```
 
 ```{r}
 reheat_statscomps_plt <- ggplot(all_stats, aes(x = name, 
                        y  = ct, 
-                       fill = statistic,
+                       fill = mean_diff,
                        label = significance)) +
-  geom_tile() +
+  geom_tile(color = "white") +
   geom_text() +
-  scale_fill_gradient2(limits = c(-25,6)) +
   theme(axis.text = element_text(size =12),
     axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
   ylab("") +
   xlab("") +
-  coord_equal()
+  coord_equal() +
+  scale_fill_manual(values = c("#74C3F0","white","#FFCC99"))
 
 reheat_statsds_plt <- ggplot(all_stats, aes(x = name, 
                        y  = ct, 
-                       fill = ds_statistic,
+                       fill = ds_mean_diff,
                        label = ds_significance)) +
-  geom_tile() +
+  geom_tile(color = "white") +
   geom_text() +
-  scale_fill_gradient2(limits = c(-25,6)) +
   theme(axis.text = element_text(size =12),
     axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
   ylab("") +
   xlab("") +
-  coord_equal()
+  coord_equal() +
+  scale_fill_manual(values = c("#74C3F0","#FFCC99"))
 
 all_stats_plt <- cowplot::plot_grid(reheat_statsds_plt, reheat_statscomps_plt, ncol = 1, align = "hv")
 all_stats_plt
@@ -245,7 +258,7 @@ batch_sw %>% group_by(HeartFailure) %>%
   nest() %>%
   dplyr::mutate(comp_sw = map(data, function(dat) {
     
-    t.test(sil_width ~ method, dat) %>%
+    wilcox.test(sil_width ~ method, dat) %>%
       broom::tidy() %>%
       dplyr::select(p.value)
     
@@ -272,5 +285,10 @@ batch_sw_plt <- batch_sw %>%
 pdf("./results/META/comparison_sw_HF.pdf", height = 2, width = 3.8)
 plot(batch_sw_plt)
 dev.off()
+
+ batch_sw %>%
+  dplyr::mutate(HeartFailure = ifelse(HeartFailure == "no", "NF", "HF")) %>%
+   group_by(HeartFailure, method) %>%
+   summarize(n())
 
 ```

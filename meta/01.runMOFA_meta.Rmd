@@ -18,8 +18,7 @@ library(uwot)
 library(edgeR)
 library(circlize)
 library(compositions)
-source("./MOFAcell/MOFAcellprep.R")
-source("./MOFAcell/factorutils.R")
+library(MOFAcellulaR)
 ```
 
 # Import Broad Data
@@ -353,86 +352,6 @@ scores_hmap <- MOFAcellulaR::plot_MOFA_hmap(model = model,
                 sample_anns = c("disease", "group"),
                 assoc_list = assoc_list,
                col_rows = col_list)
-```
-
-
-
-```{r, fig.height=8, fig.width=3.5}
-
-ht_opt$ROW_ANNO_PADDING <- unit(2.5, "mm")
-ht_opt$COLUMN_ANNO_PADDING <- unit(2.5, "mm")
-
-# Association colors
-col_fun_assoc <-  circlize::colorRamp2(seq(0, 20, length = 20), hcl.colors(20,"Purples",rev = T))
-col_fun_r2 <- circlize::colorRamp2(seq(0, 100, length = 50), hcl.colors(50,"Oranges",rev = T))
-col_fun_fact <- circlize::colorRamp2(seq(-5, 5, length = 50), hcl.colors(50,"Green-Brown",rev = T))
-
-# Make the heatmap similar to scITD
-row_anns <- rbind(get_factors(model, 
-                              factors = "all", 
-                              groups = "all")[[1]],
-                     get_factors(model, 
-                                 factors = "all", 
-                                 groups = "all")[[2]]) %>% 
-  rownames() %>% 
-  enframe() %>% 
-  dplyr::select(value) %>% 
-  left_join(all_meta, by = c("value" = "sample")) %>%
-  dplyr::select(disease, group)
-
-row_ha <- rowAnnotation(patient_group = row_anns$disease,
-                       study = row_anns$group,
-                       col = list(patient_group = c("ARVC" = "lightblue",
-                                                    "NF" = "#FF6666", 
-                                                    "HCM" = "#4169E1",
-                                                    "DCM"= "#3CB371",
-                                                    "NCC" = "pink"),
-                                  study = c("Chaffin2022" = "black",
-                                            "Reichart2022" = "darkgrey")),
-                       gap = unit(2.5, "mm"),
-                       border = TRUE)
-
-
-assoc_pvals <- bind_rows("disease" = -log10(expl_var_pgroup$adj_pvalue),
-                         "sex" = -log10(expl_var_sex$adj_pvalue),
-                         "study" = -log10(expl_var_study$adj_pvalue)) %>%
-  as.matrix()
-
-# Add explain variance per cell-type per group
-r2_per_factor_0 <- model@cache$variance_explained$r2_per_factor[[1]]
-colnames(r2_per_factor_0) <- paste0("Chaffin2022_", colnames(r2_per_factor_0))
-
-r2_per_factor_1 <- model@cache$variance_explained$r2_per_factor[[2]]
-colnames(r2_per_factor_1) <- paste0("Reichart2022_", colnames(r2_per_factor_1))
-
-r2_per_factor <- cbind(r2_per_factor_0, r2_per_factor_1)
-
-column_ha = HeatmapAnnotation("r2" = r2_per_factor,
-                              "assocs" = assoc_pvals,
-                              gap = unit(2.5, "mm"),
-                              border = TRUE,
-                              col = list(r2 = col_fun_r2,
-                                  assocs = col_fun_assoc))
-
-
-scores_hmap <- Heatmap(rbind(get_factors(model, 
-                              factors = "all", 
-                              groups = "all")[[1]],
-                     get_factors(model, 
-                                 factors = "all", 
-                                 groups = "all")[[2]]), 
-        name = "factor_scores", 
-        right_annotation = row_ha,
-        top_annotation = column_ha,
-        cluster_columns = FALSE, 
-        show_row_dend = TRUE,
-        show_row_names = FALSE,
-        border = TRUE,
-        gap = unit(2.5, "mm"),
-        col = col_fun_fact)
-
-scores_hmap
-
 
 pdf("./results/META/MOFA_mcell/MOFAcell_summ.pdf", height = 9, width = 4.5)
 
@@ -440,7 +359,6 @@ draw(scores_hmap)
 
 dev.off()
 
-draw(scores_hmap)
 ```
 
 ## Paper stats

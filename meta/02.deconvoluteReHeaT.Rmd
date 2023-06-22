@@ -122,7 +122,6 @@ dev.off()
 
 ```
 
-
 # Test the difference between cell-type disease scores across cell-types 
 
 ```{r}
@@ -134,19 +133,29 @@ ct_ds <- dr_res %>%
   nest() %>%
   mutate(ds_t = map(data, function(dat) {
     
-    t.test(scale_score ~ HeartFailure, data = dat, alternative = "less") %>%
-      broom::tidy()
+    mean_scores <- dat %>%
+      group_by(HeartFailure) %>%
+      summarize(mean_score = mean(scale_score)) %>%
+      pivot_wider(names_from = HeartFailure,values_from = mean_score)
+    
+    # Sign of the difference between the means
+    sign_diff <-  mean_scores[,"yes"] - mean_scores[,"no"]
+    
+    wilcox.test(scale_score ~ HeartFailure, data = dat, alternative = "less") %>%
+      broom::tidy() %>%
+      mutate(mean_diff = sign(sign_diff[[1]]))
     
   }))
 
 ct_ds_stat <- ct_ds %>%
   dplyr::select(name, ds_t) %>%
   unnest() %>%
-  arrange(-statistic) %>%
   group_by(name) %>%
   dplyr::mutate(p_adj = p.adjust(p.value)) %>%
-  dplyr::select(source, name, statistic, estimate, p.value, p_adj) %>%
-  dplyr::mutate(significance = ifelse(p_adj <= 0.1, "*", ""))
+  dplyr::select(source, name, mean_diff, p.value, p_adj) %>%
+  dplyr::mutate(significance = ifelse(p_adj <= 0.1, "*", "")) %>%
+  dplyr::mutate(significance = ifelse(p_adj <= 0.05, "**", significance)) %>%
+  dplyr::mutate(mean_diff = factor(mean_diff))
 
 saveRDS(ct_ds_stat, "./results/META/mofacell_ds_hftest.rds")
 ```
@@ -180,16 +189,16 @@ dev.off()
 # Here we are using the t-values
 reheat_stats_plt <- ggplot(ct_ds_stat, aes(y = name, 
                        x  = source, 
-                       fill = statistic,
+                       fill = mean_diff,
                        label = significance)) +
   geom_tile() +
   geom_text() +
-  scale_fill_gradient2() +
   theme(axis.text = element_text(size =12),
     axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
   ylab("") +
   xlab("") +
-  coord_equal()
+  coord_equal() +
+  scale_fill_manual(values = c("darkred","darkblue"))
 
 plot(reheat_stats_plt)
 

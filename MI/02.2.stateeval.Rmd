@@ -262,12 +262,12 @@ plot_eta <- function(eta_sum,
   
   
   eta_plt <- ggplot(eta_sum, aes(x = patient_group_etasq, y = cell_state_etasq, color = significance)) +
-    geom_point() +
+    geom_point(size = 1) +
     theme_minimal() +
     xlim(c(0,1)) +
     ylim(c(0,1)) +
-    theme(axis.text = element_text(size =12),
-          axis.title = element_text(size =12),
+    theme(axis.text = element_text(size =10),
+          axis.title = element_text(size =10),
           legend.text=element_text(size=10)) +
     scale_color_manual(values = c("black", "#87CEEB" , "#F5DEB3" ,"#FFB6C1"))
   
@@ -288,9 +288,12 @@ CM_eta <- estimate_statevsglobal(state_pb = state_pb,
 
 CM_eta_plt <- CM_eta %>%
   plot_eta() +
-  ylab("expl. variance by cell state") +
-  xlab("expl. variance by condition") +
+  ylab("expl. var. cell-state") +
+  xlab("expl. var. cond.") +
   theme(legend.position = "none")
+
+nrow(CM_eta)
+
 
 
 pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/CM_eta_plt.pdf", height = 3.5, width = 4.7)
@@ -312,9 +315,12 @@ Fib_eta <- estimate_statevsglobal(state_pb = state_pb,
 
 Fib_eta_plt <- Fib_eta %>%
   plot_eta() +
-  ylab("expl. variance by cell state") +
-  xlab("expl. variance by condition") +
+  ylab("expl. var. cell-state") +
+  xlab("expl. var. cond.") +
   theme(legend.position = "none")
+
+nrow(Fib_eta)
+
 
 pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/Fib_eta_plt.pdf", height = 3.5, width = 4.7)
 
@@ -334,9 +340,12 @@ Endo_eta <- estimate_statevsglobal(state_pb = state_pb,
 
 Endo_eta_plt <- Endo_eta %>%
   plot_eta() +
-  ylab("expl. variance by cell state") +
-  xlab("expl. variance by condition") +
+  ylab("expl. var. cell-state") +
+  xlab("expl. var. cond.") +
   theme(legend.position = "none")
+
+nrow(Endo_eta)
+
 
 pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/Endo_eta_plt.pdf", height = 3.5, width = 4.7)
 
@@ -355,9 +364,11 @@ Myeloid_eta <- estimate_statevsglobal(state_pb = state_pb,
 
 Myeloid_eta_plt <- Myeloid_eta %>%
   plot_eta() +
-  ylab("expl. variance by cell state") +
-  xlab("expl. variance by condition") +
+  ylab("expl. var. cell-state") +
+  xlab("expl. var. cond.") +
   guides(colour = guide_legend(override.aes = list(size=3)))
+
+nrow(Myeloid_eta)
 
 pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/Myeloid_eta_plt.pdf", height = 3.5, width = 4.7)
 
@@ -367,7 +378,6 @@ dev.off()
 ```
 
 ```{r}
-
 first_column <- cowplot::plot_grid(CM_eta_plt, Fib_eta_plt, ncol = 1, align = "hv")
 second_column <- cowplot::plot_grid(cowplot::plot_grid(Endo_eta_plt, 
                                                        Myeloid_eta_plt + 
@@ -379,7 +389,7 @@ second_column <- cowplot::plot_grid(cowplot::plot_grid(Endo_eta_plt,
                                                        ncol = 1, 
                                                        align = "hv"))
 
-pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/all_eta_plt.pdf", height = 5, width = 9)
+pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/all_eta_plt.pdf", height = 3.8, width = 6.5)
 
 plot(cowplot::plot_grid(first_column, 
                         second_column, ncol = 2, rel_widths = c(1,2)))
@@ -401,17 +411,41 @@ global_ratio_plt <- bind_rows(CM_eta, Fib_eta,
         axis.text.y = element_text(size = 12),
         axis.title = element_text(size =12)) +
   xlab("") +
-  ylab("log2(condition/state)")
+  ylab("log2(cond./state)")
 
 plot(global_ratio_plt)
 
-pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/eta_ratio_plt.pdf", height = 2.5, width = 2.5)
+pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/eta_ratio_plt.pdf", height = 2.3, width = 2)
 
 plot(global_ratio_plt)
 
 dev.off()
 
 ```
+
+# Test for normality
+
+```{r}
+norm_test <- bind_rows(CM_eta, Fib_eta, 
+          Endo_eta, Myeloid_eta) %>%
+  group_by(ct) %>%
+  nest() %>%
+  dplyr::mutate(norm_test = map(data, function(dat) {
+    
+    test_dat <- dplyr::filter(dat,
+                              !is.infinite(global_ratio))
+    
+    shapiro.test(test_dat$global_ratio) %>%
+      broom::tidy()
+  })) %>%
+  dplyr::select(ct, norm_test) %>%
+  unnest() %>%
+  ungroup() %>%
+  mutate(adj_p = p.adjust(p.value))
+```
+
+
+# Test diference from 0 (equal contribution of condition and state)
 
 ```{r}
  bind_rows(CM_eta, Fib_eta, 
@@ -451,10 +485,24 @@ plot_complexreg <- function(ct, gene) {
         axis.text.y = element_text(size = 10),
         axis.title = element_text(size = 10))
   
+  state_pb %>%
+  dplyr::filter(view == ct,
+                feature == gene) %>%
+    group_by(patient_group) %>%
+    summarise(n()) %>%
+    print()
+  
+  state_pb %>%
+  dplyr::filter(view == ct,
+                feature == gene) %>%
+    group_by(patient_group, cell_state) %>%
+    summarise(n()) %>%
+    print()
+  
   cond_ex_plt <- state_pb %>%
   dplyr::filter(view == ct,
                 feature == gene) %>%
-  ggplot(aes(x = patient_group, y = value)) +
+  ggplot(aes(x = patient_group, y = value, color = patient_group)) +
   geom_boxplot() +
   geom_point() +
   theme_minimal() +
@@ -462,7 +510,8 @@ plot_complexreg <- function(ct, gene) {
   xlab("") +
   theme(axis.text.x = element_text(angle = 90, size = 10, hjust = 1, vjust = 0.5),
         axis.text.y = element_text(size = 10),
-        axis.title = element_text(size = 10))
+        axis.title = element_text(size = 10)) +
+  scale_color_manual(values = c("#FF6666", "#4169E1", "#3CB371"))
   
   distilled_plt <- state_pb %>%
   dplyr::filter(view == ct,
@@ -471,6 +520,8 @@ plot_complexreg <- function(ct, gene) {
              y = value, 
              color = patient_group)) +
   geom_boxplot() +
+  stat_summary(fun=mean, geom="line", aes(group=patient_group)) +
+  #stat_summary(fun=mean, geom="point", aes(group=patient_group)) +
   theme_minimal() +
   ylab("expression") +
   xlab("") +
@@ -479,18 +530,31 @@ plot_complexreg <- function(ct, gene) {
         axis.title = element_text(size = 11)) +
   scale_color_manual(values = c("#FF6666", "#4169E1", "#3CB371"))
   
-  all_plt <- cowplot::plot_grid(cond_ex_plt, state_ex_plt, distilled_plt, align = "h", ncol = 3,rel_widths = c(0.75, 0.9, 1.5))
+  plt_list <- list("cond" = cond_ex_plt,
+                   "state" = distilled_plt)
   
-  all_plt_red <- cowplot::plot_grid(cond_ex_plt, distilled_plt, align = "h", ncol = 2,rel_widths = c(0.75, 1.5))
+  all_plt <- cowplot::plot_grid(cond_ex_plt, 
+                                state_ex_plt, 
+                                distilled_plt, 
+                                align = "h", 
+                                ncol = 3,
+                                rel_widths = c(0.75, 0.9, 1.5))
+  
+  all_plt_red <- cowplot::plot_grid(cond_ex_plt, 
+                                    distilled_plt, 
+                                    align = "h", 
+                                    ncol = 2,
+                                    rel_widths = c(0.75, 1))
 
   
-  return(all_plt_red)
+  return(plt_list)
 }
 ```
 
 # CM
 
 ```{r}
+#15
 cm_example <- plot_complexreg(ct = "CM",
                 gene = "GUCY2C")
 
@@ -500,6 +564,7 @@ cm_example
 # Fib
 
 ```{r}
+#10
 fib_example <- plot_complexreg(ct = "Fib",
                 gene = "HIF1A")
 
@@ -509,6 +574,7 @@ fib_example
 # Endo
 
 ```{r}
+#16
 endo_example <- plot_complexreg(ct = "Endo",
                 gene = "CCAR1")
 
@@ -518,19 +584,20 @@ endo_example
 # Myeloid
 
 ```{r}
+#21
 myeloid_example <- plot_complexreg(ct = "Myeloid",
                 gene = "MARCH1")
 
 myeloid_example
+
 ```
 
 ```{r}
-pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/global_response_examples.pdf", height = 10, width = 4)
+pdf("./results/MI/MOFA_mcell/factor_desc/Factor1_char/global_response_examples.pdf", height = 3, width = 21)
 
-plot(cowplot::plot_grid(cm_example, fib_example, 
-                   endo_example, myeloid_example, 
-                   ncol = 1, align = "hv", 
-                   rel_heights = c(1,0.9,1,1.35)))
+plot(cowplot::plot_grid(plotlist = c(endo_example, myeloid_example,
+                                     cm_example, fib_example),
+                        nrow = 1, align = "hv", rel_widths = rep(c(0.75, 0.9),4)))
 
 dev.off()
 ```

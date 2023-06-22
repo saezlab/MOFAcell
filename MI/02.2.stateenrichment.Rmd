@@ -223,16 +223,21 @@ state_plt_main <- function(ct, state_sets, color_fill) {
       dplyr::filter(cell_type == ct,
                     cell_state == gsub(paste0("^", ct, "_"), "", state_sets[[ct]])) %>%
       group_by(patient_group, cell_state) %>%
-      dplyr::summarise(med_prop = median(cell_props))
+      dplyr::summarise(mean_prop = mean(cell_props),
+                       sd_prop = sd(cell_props))
     
-    comp_bar <- ggplot(props_dat, aes(x = patient_group, y = med_prop)) +
+    comp_bar <- ggplot(props_dat, aes(x = patient_group, y = mean_prop)) +
       geom_bar(stat = "identity", fill = color_fill) +
+      geom_errorbar(aes(x=patient_group, 
+                        ymin=mean_prop-sd_prop, 
+                        ymax=mean_prop+sd_prop), 
+                    width=0.2, colour="black", alpha=0.7, size=0.5)+
       theme_classic() +
       theme(axis.text = element_text(size = 10),
             axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
             axis.title = element_text(size = 10),
             plot.title = element_text(size = 8, face = "bold")) +
-      ylab("median prop.") +
+      ylab("mean prop.") +
       xlab("") +
       ggtitle(gsub(paste0("^", ct, "_"), "", state_sets[[ct]]))
     
@@ -242,6 +247,21 @@ state_plt_main <- function(ct, state_sets, color_fill) {
 
 }
 ```
+
+```{r}
+state_coldata %>% 
+  group_by(cell_state, patient_group) %>% 
+  summarize(n()) %>% 
+  dplyr::filter(cell_state %in% c("Capillary_Endo", "LYVE_FOLR_Macrophages","healthy_CM", "Fib_0"))
+
+
+state_coldata %>% 
+  group_by(cell_state, patient_group) %>% 
+  summarize(n()) %>% 
+  dplyr::filter(cell_state %in% c("damaged_CM", "Lymphatic_Endo", "SPP1_Macrophages", "Myofib"))
+
+```
+
 
 ```{r}
 healthy_plts <- set_names(cts) %>%

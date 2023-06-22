@@ -454,7 +454,7 @@ summarize_factor <- function(model,
 }
 
 
-
+# Check that by default loadings are put to 0
 summarize_factor_lite <- function(model, 
                              factor, 
                              meta, 
@@ -560,8 +560,6 @@ summarize_factor_lite <- function(model,
     summarise(count = sum(count)) %>%
     dplyr::mutate(percent = count/sum(count)) %>%
     print()
-  
-  
   
   # Here we calculate the jaccard index between shared genes across cell - types
   

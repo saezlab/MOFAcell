@@ -1,0 +1,84 @@
+---
+title: "Comparing explained variances of models"
+author: "Ricardo Ramirez"
+date: "2023-06-11"
+output: html_document
+---
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(MOFAcellulaR)
+```
+
+```{r, message=FALSE, warning=FALSE}
+reichart_model <- file.path("./results/DCM_hubner/MOFA_mcell/", "DCM_hubner.hdf5") %>% 
+  MOFA2::load_model()
+
+reichart_HFfactors <- c("Factor1", "Factor4")
+
+chaffin_model <- file.path("./results/DCM_broad/MOFA_mcell/", "DCMBroad_model.hdf5") %>% 
+  MOFA2::load_model()
+
+chaffin_HFfactors <- c("Factor1")
+
+meta_model <- file.path("./results/META/MOFA_mcell/", "model.hdf5") %>%
+  MOFA2::load_model()
+
+reichart_HFfactors_meta <- c("Factor1", "Factor2", "Factor4")
+chaffin_HFfactors_meta <- c("Factor1", "Factor2")
+```
+
+# Compare total explained variance
+#META
+```{r}
+Chaffin2022_R2_meta <- meta_model@cache$variance_explained$r2_total$Chaffin2022 %>% mean()
+Reichart_R2_meta <- meta_model@cache$variance_explained$r2_total$Reichart2022 %>% mean()
+```
+#INDIVIDUAL
+```{r}
+Chaffin2022_R2 <- chaffin_model@cache$variance_explained$r2_total$single_group %>% mean()
+Reichart_R2 <- reichart_model@cache$variance_explained$r2_total$single_group %>% mean()
+```
+
+```{r}
+Chaffin2022_R2_meta - Chaffin2022_R2
+```
+
+```{r}
+Reichart_R2_meta - Reichart_R2
+```
+
+# Compare explained variance associated with HF
+```{r}
+Chaffin2022_R2_meta <- meta_model@cache$variance_explained$r2_per_factor$Chaffin2022[chaffin_HFfactors_meta,] %>% 
+  colSums() %>%
+  mean()
+
+Reichart_R2_meta <- meta_model@cache$variance_explained$r2_per_factor$Reichart2022[reichart_HFfactors_meta,] %>% 
+  colSums() %>%
+  mean()
+```
+
+```{r}
+Chaffin2022_R2 <- chaffin_model@cache$variance_explained$r2_per_factor$single_group[chaffin_HFfactors,, drop =F] %>% 
+  colSums() %>%
+  mean()
+
+Reichart_R2 <- reichart_model@cache$variance_explained$r2_per_factor$single_group[reichart_HFfactors,] %>% 
+  colSums() %>%
+  mean()
+```
+
+
+```{r}
+Chaffin2022_R2_meta - Chaffin2022_R2
+```
+
+```{r}
+Reichart_R2_meta - Reichart_R2
+```
+
+
+
+
+
