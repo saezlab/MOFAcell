@@ -22,8 +22,8 @@ Cross-condition single-cell atlases are essential in the characterization of hum
 ### Availabilty of data
 
 The datasets supporting the conclusions of this publication are available at Zenodo:
-10.5281/zenodo.7660312
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.7660312.svg)](https://zenodo.org/record/7660312#.Y_S5K-zMIeY)
+10.5281/zenodo.8082895
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.8082895.svg)](https://zenodo.org/record/8082895)
 
 From Zenodo you can download these (zipped) folders: 
 
