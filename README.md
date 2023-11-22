@@ -17,7 +17,7 @@ Cross-condition single-cell atlases are essential in the characterization of hum
  A python implementation within our [LIANA](https://github.com/saezlab/liana-py) framework is available [here](https://liana-py.readthedocs.io/en/latest/notebooks/mofacellular.html)
 
 ### How to cite
- > Ramirez-Flores RO, Lanzer JD, Dimitrov D, Velten B, Saez-Rodriguez J. “Multicellular factor analysis for a tissue-centric understanding of disease” BioRxiv. 2023. DOI: [10.1101/2023.02.23.529642](https://www.biorxiv.org/content/10.1101/2023.02.23.529642v1)
+ > Ramirez-Flores RO, Lanzer JD, Dimitrov D, Velten B, Saez-Rodriguez J. “Multicellular factor analysis for a tissue-centric understanding of disease” eLife. 2023. DOI: [10.7554/eLife.93161](https://elifesciences.org/articles/93161)
 
 ### Availabilty of data
 
